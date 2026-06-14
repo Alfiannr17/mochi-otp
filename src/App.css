@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Opsional: Kamu bisa tambahkan font atau reset CSS lain di bawah sini nanti */
+body {
+  margin: 0;
+  font-family: monospace; /* Biar kerasa brutalism-nya */
+}

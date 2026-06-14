@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Opsional: Kamu bisa tambahkan font atau reset CSS lain di bawah sini nanti */
+body {
+  margin: 0;
+  font-family: monospace; /* Biar kerasa brutalism-nya */
+}
+
+.mochi-hero-grid {
+  background-image:
+    linear-gradient(rgba(0, 0, 0, 0.22) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.22) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+.mochi-bot-float {
+  transform-origin: center;
+  animation: mochi-bot-float 3s ease-in-out infinite;
+}
+
+.mochi-wave-hand {
+  transform-box: fill-box;
+  transform-origin: 8px 43px;
+  animation: mochi-wave-hand 0.85s ease-in-out infinite alternate;
+}
+
+.mochi-orbit {
+  position: absolute;
+  inset: 8px;
+  z-index: 0;
+  border: 2px dashed #000;
+  border-radius: 9999px;
+  animation: mochi-orbit-spin 7s linear infinite;
+}
+
+.mochi-orbit-dot {
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  width: 11px;
+  height: 11px;
+  border: 2px solid #000;
+  border-radius: 9999px;
+  background: #fff;
+  transform: translateX(-50%);
+}
+
+.mochi-sparkle {
+  animation: mochi-sparkle 1.2s ease-in-out infinite alternate;
+}
+
+.mochi-sparkle-delay {
+  animation: mochi-sparkle 1.2s 0.5s ease-in-out infinite alternate;
+}
+
+@keyframes mochi-bot-float {
+  0%, 100% { transform: translateY(1px) rotate(-1deg); }
+  50% { transform: translateY(-6px) rotate(1deg); }
+}
+
+@keyframes mochi-wave-hand {
+  from { transform: rotate(-12deg); }
+  to { transform: rotate(13deg); }
+}
+
+@keyframes mochi-orbit-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes mochi-sparkle {
+  from { transform: scale(0.75) rotate(0); opacity: 0.45; }
+  to { transform: scale(1.15) rotate(20deg); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mochi-bot-float,
+  .mochi-wave-hand,
+  .mochi-orbit,
+  .mochi-sparkle,
+  .mochi-sparkle-delay {
+    animation: none;
+  }
+}
