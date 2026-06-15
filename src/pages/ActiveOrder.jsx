@@ -11,13 +11,19 @@ import { parseOtpState } from '../lib/otpHistory';
 import MochiLoader from '../components/MochiLoader';
 import { markOtpCodesSeen, notifyNewOtpCodes } from '../lib/otpNotification';
 
-const ORDER_LIFETIME_MS = 25 * 60 * 1000;
+const SERVER1_ORDER_LIFETIME_MS = 25 * 60 * 1000;
+const SERVER2_ORDER_LIFETIME_MS = 20 * 60 * 1000;
 const SERVER2_CANCEL_DELAY_MS = 2 * 60 * 1000;
+
+const getOrderLifetimeMs = (order) =>
+  String(order?.activation_id || '').startsWith('smscode:')
+    ? SERVER2_ORDER_LIFETIME_MS
+    : SERVER1_ORDER_LIFETIME_MS;
 
 const getTimeLeft = (order) => {
   const createdAt = new Date(order?.created_at).getTime();
   if (!Number.isFinite(createdAt)) return 0;
-  return Math.max(0, Math.ceil((createdAt + ORDER_LIFETIME_MS - Date.now()) / 1000));
+  return Math.max(0, Math.ceil((createdAt + getOrderLifetimeMs(order) - Date.now()) / 1000));
 };
 
 const getCancelWaitLeft = (order) => {

@@ -11,7 +11,13 @@ import {
   serializeOtpState,
 } from "./otp-history.ts"
 
-export const ORDER_LIFETIME_MS = 25 * 60 * 1000
+export const SERVER1_ORDER_LIFETIME_MS = 25 * 60 * 1000
+export const SERVER2_ORDER_LIFETIME_MS = 20 * 60 * 1000
+
+export const getOrderLifetimeMs = (order: any) =>
+  parseActivationId(order?.activation_id).provider === 'smscode'
+    ? SERVER2_ORDER_LIFETIME_MS
+    : SERVER1_ORDER_LIFETIME_MS
 
 const saveOtp = async (supabase: any, order: any, code: string, message: unknown = null) => {
   const otpState = appendOtpCode(order.sms_code, code, message)
@@ -102,7 +108,7 @@ export const expireOrderIfNeeded = async (supabase: any, order: any) => {
   }
 
   const createdAt = new Date(order.created_at).getTime()
-  if (!Number.isFinite(createdAt) || Date.now() < createdAt + ORDER_LIFETIME_MS) {
+  if (!Number.isFinite(createdAt) || Date.now() < createdAt + getOrderLifetimeMs(order)) {
     return order
   }
 

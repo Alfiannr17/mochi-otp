@@ -46,7 +46,9 @@ Admin:
 Flow order terbaru:
 
 ```text
-Semua order aktif berlaku selama 25 menit.
+Masa aktif order:
+- Server 1 berlaku selama 25 menit.
+- Server 2 berlaku selama 20 menit.
 
 Sebelum OTP pertama:
 - Tombol yang tersedia hanya Refund.
@@ -62,7 +64,7 @@ Setelah Minta SMS Lagi pada Server 2:
 - Jika OTP baru tidak diterima sampai masa order habis, order otomatis selesai
   dan OTP sebelumnya tetap tersimpan.
 
-Saat 25 menit habis:
+Saat masa aktif sesuai server habis:
 - Jika belum pernah menerima OTP, order otomatis dibatalkan dan saldo dikembalikan.
 - Jika sudah pernah menerima OTP, order otomatis diselesaikan tanpa refund.
 ```
@@ -1215,8 +1217,8 @@ Jangan menghapus atau mematikan project dummy sebelum seluruh order aktif dan de
 - Setelah OTP diterima, Refund hilang dan tombol Minta SMS Lagi/Selesai tampil.
 - Saat menunggu OTP baru Server 2, tombol Selesai dinonaktifkan.
 - Refund dan selesai bekerja.
-- Order tanpa OTP otomatis refund saat 25 menit habis.
-- Order yang sudah memiliki OTP otomatis selesai saat 25 menit habis.
+- Order tanpa OTP otomatis refund saat masa aktif server habis.
+- Order yang sudah memiliki OTP otomatis selesai saat masa aktif server habis.
 - Voucher dapat diklaim.
 - Tombol S&K menampilkan ketentuan layanan.
 
@@ -1465,7 +1467,7 @@ Gunakan daftar ini tepat sebelum aplikasi diumumkan ke user:
 [ ] Server 2 menampilkan otp_message serta menahan refund selama 2 menit.
 [ ] Semua OTP tersimpan di History Order dan notifikasi suara bekerja.
 [ ] History order/deposit menampilkan filter dan pagination 10 transaksi.
-[ ] Order 25 menit dan deposit 30 menit menyelesaikan lifecycle dengan benar.
+[ ] Order Server 1 selama 25 menit, Server 2 selama 20 menit, dan deposit 30 menit menyelesaikan lifecycle dengan benar.
 [ ] Order, OTP, refund, voucher, promo, maintenance fitur, dan deposit telah diuji.
 [ ] Tidak ada order aktif atau deposit pending yang tertinggal di project dummy.
 ```
