@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { adminApi } from '../../lib/adminApi';
 import { WalletIcon } from '../../components/Icons';
 import AdminFilterBar from '../../components/admin/AdminFilterBar';
+import MochiLoader from '../../components/MochiLoader';
 
 export default function AdminDeposits() {
   const [deposits, setDeposits] = useState([]);
@@ -83,7 +84,7 @@ export default function AdminDeposits() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan="5" className="p-8 text-center font-bold">Memuat data deposit...</td></tr>
+              <tr><td colSpan="5"><MochiLoader compact message="Memuat data deposit..." /></td></tr>
             ) : filteredDeposits.length === 0 ? (
               <tr><td colSpan="5" className="p-8 text-center font-bold">Deposit tidak ditemukan.</td></tr>
             ) : filteredDeposits.map((d) => (

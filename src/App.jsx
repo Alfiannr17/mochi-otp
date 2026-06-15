@@ -15,6 +15,7 @@ import AdminVouchers from './pages/admin/AdminVouchers';
 import AdminOrders from './pages/admin/AdminOrders';
 import AdminDeposits from './pages/admin/AdminDeposits';
 import AdminDashboard from './pages/admin/AdminDashboard';
+import AdminFeatures from './pages/admin/AdminFeatures';
 
 // Layout Admin (Nanti di-slicing terpisah)
 import AdminLayout from './components/AdminLayout';
@@ -48,6 +49,7 @@ export default function App() {
           <Route path="vouchers" element={<AdminVouchers />} />
           <Route path="orders" element={<AdminOrders />} />
           <Route path="deposits" element={<AdminDeposits />} />
+          <Route path="features" element={<AdminFeatures />} />
         </Route>
         <Route path="*" element={<Navigate to="/home" replace />} />
       </Routes>

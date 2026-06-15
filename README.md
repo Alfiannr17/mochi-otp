@@ -15,6 +15,67 @@ Mengatur webhook Telegram dan Pakasir
 Menguji seluruh fitur sebelum digunakan user
 ```
 
+## Ringkasan Source Terbaru
+
+Source saat ini memiliki fitur dan flow berikut:
+
+```text
+User:
+- Login otomatis menggunakan akun Telegram Mini App.
+- Profile menampilkan foto, nama, username, Telegram ID, dan saldo.
+- Saldo harian dapat diklaim kembali tepat 24 jam setelah klaim terakhir.
+- Order dapat memilih Server 1 atau Server 2, negara, layanan, dan pilihan harga.
+- Order aktif tetap dapat dibuka kembali melalui History.
+- Seluruh OTP dan pesan SMS Server 2 disimpan sampai order selesai.
+- Notifikasi suara diputar setiap ada OTP baru.
+- History order dan deposit memiliki filter status serta pagination 10 transaksi per halaman.
+- Seluruh dialog dan loading memakai tampilan tema MochiOTP.
+
+Deposit:
+- QRIS pending dapat dibuka dan dibayar kembali melalui History Deposit.
+- Promo deposit mendukung persentase, minimal deposit, dan maksimal bonus.
+- Detail deposit menampilkan nominal, bonus, total saldo masuk, status, dan waktu.
+
+Admin:
+- Dashboard ringkasan dan statistik.
+- Pencarian/filter pada halaman data admin.
+- Kelola user, tambah/kurangi saldo, ban/unban, voucher, promo, order, dan deposit.
+- Aktif/nonaktifkan Server 1, Server 2, dan Deposit beserta pesan maintenance.
+```
+
+Flow order terbaru:
+
+```text
+Semua order aktif berlaku selama 25 menit.
+
+Sebelum OTP pertama:
+- Tombol yang tersedia hanya Refund.
+- Khusus Server 2, Refund baru dapat digunakan setelah order berumur 2 menit.
+
+Setelah OTP pertama diterima:
+- Refund tidak tersedia lagi.
+- Tombol berubah menjadi Minta SMS Lagi dan Selesai.
+- Semua OTP yang diterima tetap tersimpan dan tampil di History Order.
+
+Setelah Minta SMS Lagi pada Server 2:
+- Tombol Selesai dinonaktifkan sampai OTP baru diterima.
+- Jika OTP baru tidak diterima sampai masa order habis, order otomatis selesai
+  dan OTP sebelumnya tetap tersimpan.
+
+Saat 25 menit habis:
+- Jika belum pernah menerima OTP, order otomatis dibatalkan dan saldo dikembalikan.
+- Jika sudah pernah menerima OTP, order otomatis diselesaikan tanpa refund.
+```
+
+Flow deposit terbaru:
+
+```text
+Deposit pending berlaku selama 30 menit.
+- Jika pembayaran berhasil, deposit menjadi success dan saldo dikreditkan satu kali.
+- Jika belum dibayar sampai waktu habis, deposit menjadi canceled.
+- QRIS deposit pending tetap dapat dilihat kembali melalui History Deposit.
+```
+
 Setiap perintah yang mengandung:
 
 ```text
@@ -36,6 +97,8 @@ supabase migration up
 ```
 
 Perintah tersebut dapat mengubah atau merusak database kamu. Proses setup hanya akan menghubungkan source, deploy frontend dan Edge Functions, memasang secrets, serta mengatur webhook.
+
+Pengecualian: jika source terbaru menambahkan tabel yang memang belum tersedia, jalankan hanya file migration yang diperlukan melalui Supabase SQL Editor setelah membaca isinya. Jangan menjalankan seluruh folder migration secara otomatis pada database production.
 
 ## 1. Siapkan Akun dan Data Konfigurasi
 
@@ -275,6 +338,7 @@ deposits
 vouchers
 voucher_claims
 promo_settings
+feature_settings
 checkin
 ```
 
@@ -291,6 +355,7 @@ where table_schema = 'public'
     'vouchers',
     'voucher_claims',
     'promo_settings',
+    'feature_settings',
     'checkin'
   )
 order by table_name;
@@ -312,8 +377,17 @@ deposits: order_id, user_id, amount, status, payment_url, created_at
 vouchers: code, amount, batch, max_usage, current_usage, is_active, created_at
 voucher_claims: id, user_id, voucher_code, created_at
 promo_settings: id, promo_name, percentage, min_deposit, max_bonus, is_active, created_at
+feature_settings: feature_key, is_active, maintenance_message, updated_at
 checkin: id, user_id, amount, created_at
 ```
+
+Perhatian khusus untuk `orders.sms_code`:
+
+```text
+orders.sms_code wajib dapat menyimpan text panjang.
+```
+
+Kolom ini tidak hanya menyimpan satu kode OTP. Source terbaru menyimpan state internal berisi seluruh kode OTP, seluruh `otp_message` Server 2, dan status sedang menunggu OTP lanjutan. Gunakan tipe `text` dan jangan membatasi panjangnya menggunakan `varchar` pendek.
 
 Kolom `deposits.payment_url` wajib bertipe `text`. Source terbaru menggunakan kolom tersebut untuk menyimpan metadata internal transaksi yang mencakup QRIS, biaya, promo, bonus, dan total saldo masuk. Metadata ini membuat QRIS deposit pending dapat dibuka kembali dari riwayat tanpa direct link ke Pakasir.
 
@@ -329,6 +403,18 @@ is_active   = status promo aktif/nonaktif
 ```
 
 Source terbaru tidak lagi menggunakan kolom lama `bonus_percentage`. Database kamu wajib memakai kolom `percentage`.
+
+Tabel `feature_settings` dipakai panel admin untuk mengaktifkan atau menonaktifkan Server 1, Server 2, dan Deposit serta menyimpan keterangan maintenance. Jalankan migration berikut melalui Supabase SQL Editor sebelum deploy Edge Functions:
+
+```text
+supabase/migrations/20260615010000_create_feature_settings.sql
+```
+
+Jika tabel `feature_settings` beserta ketiga row `server1`, `server2`, dan `deposit` sudah tersedia, jangan menjalankan migration tersebut lagi.
+
+Saldo harian tidak membutuhkan migration tambahan. Edge Function `daily-checkin` membaca `created_at` terakhir berdasarkan `checkin.user_id`, lalu menghitung waktu klaim berikutnya dengan menambahkan 24 jam. Proses ini tidak memakai reset pukul 00.00.
+
+Saat fitur order dinonaktifkan, hanya katalog dan order baru yang diblokir. Order aktif, OTP, refund, dan riwayat tetap berjalan. Saat Deposit dinonaktifkan, hanya pembuatan QRIS baru yang diblokir; pembayaran dan riwayat deposit lama tetap dapat diperiksa.
 
 Periksa seluruh kolom tanpa mengubah database:
 
@@ -347,6 +433,7 @@ where table_schema = 'public'
     'vouchers',
     'voucher_claims',
     'promo_settings',
+    'feature_settings',
     'checkin'
   )
 order by table_name, ordinal_position;
@@ -354,7 +441,7 @@ order by table_name, ordinal_position;
 
 Pastikan ada unique constraint pada pasangan `voucher_claims(user_id, voucher_code)` agar voucher yang sama tidak dapat diklaim dua kali oleh user yang sama.
 
-Pastikan policy RLS database kamu sesuai. Frontend saat ini membaca tabel `users` dan `checkin` secara langsung. Jangan menonaktifkan RLS hanya untuk membuat aplikasi berjalan; gunakan policy yang memang sudah dirancang untuk database kamu.
+Pastikan policy RLS database kamu sesuai. Saldo harian diproses oleh Edge Function `daily-checkin` menggunakan validasi Telegram dan service role. Jangan membuat policy yang mengizinkan anon mengubah saldo user secara langsung.
 
 ## 6. Tentukan URL Frontend Final
 
@@ -728,6 +815,54 @@ Layanan lainnya       = Rp600
 
 Jika secret diubah setelah function sudah deploy, secret baru akan tersedia untuk pemanggilan function berikutnya. Deploy ulang `telegram-bot` tetap disarankan setelah mengganti konfigurasi tombol `/start`.
 
+### Mengganti API Key Server 2 SMSCode
+
+Server 2 menggunakan API SMSCode v2:
+
+```text
+https://api.smscode.gg/v2
+```
+
+Source memesan offer menggunakan `product_id` yang dipilih user. Harga Rupiah Server 2 dibaca dari `canonical_amount`, sehingga tidak menggunakan `SMSBOWER_USD_TO_IDR_RATE`.
+
+Untuk mengganti API key Server 2:
+
+```powershell
+npx supabase secrets set `
+  "API_KEY_SMSCODE=API_KEY_SMSCODE_BARU" `
+  --project-ref REAL_PROJECT_REF
+```
+
+Kemudian deploy ulang seluruh function yang menggunakan integrasi Server 2:
+
+```powershell
+$projectRef = "REAL_PROJECT_REF"
+$functions = @(
+  "buy-number",
+  "cancel-order",
+  "check-sms",
+  "order-action",
+  "sms-catalog",
+  "user-data"
+)
+
+foreach ($function in $functions) {
+  npx supabase functions deploy $function `
+    --project-ref $projectRef `
+    --no-verify-jwt
+}
+```
+
+Uji setelah mengganti key:
+
+```text
+1. Buka Server 2 pada halaman Order.
+2. Pastikan negara, layanan, harga, dan stok tampil.
+3. Buat satu order kecil.
+4. Pastikan OTP code dan otp_message tampil.
+5. Pastikan Refund ditahan selama 2 menit jika OTP belum masuk.
+```
+
 ## 9. Deploy Edge Functions ke Supabase Kamu
 
 Deploy seluruh function dari repository ke project Supabase kamu:
@@ -742,6 +877,7 @@ $functions = @(
   "check-sms",
   "claim-voucher",
   "create-qris",
+  "daily-checkin",
   "order-action",
   "pakasir-webhook",
   "sms-catalog",
@@ -773,6 +909,7 @@ FUNCTIONS=(
   check-sms
   claim-voucher
   create-qris
+  daily-checkin
   order-action
   pakasir-webhook
   sms-catalog
@@ -803,6 +940,60 @@ ACTIVE
 Jika satu function gagal deploy, jangan lanjut mengatur webhook sebelum function tersebut berhasil.
 
 Jangan menyalin Edge Functions dari dashboard project dummy. Deploy selalu dari repository agar project kamu memakai kode terbaru.
+
+### Deploy Ulang Setelah Source Diperbarui
+
+Saat menerima revisi source terbaru, jalankan:
+
+```powershell
+git pull
+npm install
+npm run lint
+npm run build
+```
+
+Jika frontend berubah, deploy ulang frontend:
+
+```powershell
+npx vercel --prod
+```
+
+Jika menggunakan VPS:
+
+```bash
+cd /opt/mochi-otp
+git pull
+npm install
+npm run lint
+npm run build
+rsync -a --delete dist/ /var/www/mochi-otp/
+systemctl reload nginx
+```
+
+Jika Edge Function atau file dalam `supabase/functions/_shared` berubah, cara paling aman adalah deploy ulang seluruh Edge Functions menggunakan perintah pada langkah 9.
+
+Panduan deploy minimum:
+
+| Perubahan | Yang perlu di-deploy |
+| --- | --- |
+| File dalam `src/`, `public/`, atau konfigurasi UI | Frontend Vercel/VPS |
+| `telegram-bot` atau tombol `/start` | Function `telegram-bot` |
+| Login Telegram | Function `telegram-auth` |
+| Server 1/Server 2, pricing, order, OTP, refund, atau file shared order | `sms-catalog`, `buy-number`, `check-sms`, `cancel-order`, `order-action`, `user-data` |
+| Deposit, QRIS, promo, atau file shared deposit/Pakasir | `create-qris`, `check-qris`, `pakasir-webhook`, `user-data` |
+| Voucher | `claim-voucher`, dan `admin-api` jika panel admin ikut berubah |
+| Saldo harian/Profile | Deploy `daily-checkin`, lalu deploy frontend |
+| Panel admin | `admin-api` dan frontend |
+| Migration baru | Jalankan SQL migration yang relevan melalui SQL Editor, lalu deploy function terkait |
+
+Penting:
+
+```text
+Perubahan pada file _shared tidak otomatis memperbarui function production.
+Setiap function yang mengimpor file shared tersebut harus di-deploy ulang.
+```
+
+Vercel akan menjalankan build secara otomatis saat deploy. Menjalankan `npm run lint` dan `npm run build` sebelum deploy tetap wajib disarankan agar error ditemukan sebelum production.
 
 ## 10. Atur Webhook Telegram
 
@@ -953,6 +1144,8 @@ npx supabase secrets set `
   --project-ref REAL_PROJECT_REF
 ```
 
+Telegram ID juga dapat dilihat pada halaman Profile Mini App.
+
 ## 11. Atur Webhook Pakasir
 
 Lakukan langkah ini setelah function `pakasir-webhook` berhasil deploy dan secrets Pakasir sudah benar.
@@ -1008,13 +1201,22 @@ Jangan menghapus atau mematikan project dummy sebelum seluruh order aktif dan de
 ### User
 
 - Saldo mengambil data dari database kamu.
+- Profile menampilkan foto, nama, username, dan Telegram ID.
+- Saldo harian hanya dapat diklaim lagi setelah tepat 24 jam dan countdown tampil di Profile.
 - Negara dan layanan tampil.
 - Order SMSBower berhasil.
 - Order SMSCode berhasil.
 - Active order masuk history.
-- OTP tampil.
+- History order memiliki filter status dan pagination maksimal 10 transaksi per halaman.
+- OTP pertama dan OTP lanjutan tetap tersimpan.
+- `otp_message` Server 2 tampil pada active order dan history.
+- Notifikasi suara berbunyi saat OTP baru diterima.
+- Refund Server 2 belum dapat digunakan sebelum 2 menit.
+- Setelah OTP diterima, Refund hilang dan tombol Minta SMS Lagi/Selesai tampil.
+- Saat menunggu OTP baru Server 2, tombol Selesai dinonaktifkan.
 - Refund dan selesai bekerja.
-- Expiry order bekerja.
+- Order tanpa OTP otomatis refund saat 25 menit habis.
+- Order yang sudah memiliki OTP otomatis selesai saat 25 menit habis.
 - Voucher dapat diklaim.
 - Tombol S&K menampilkan ketentuan layanan.
 
@@ -1022,10 +1224,12 @@ Jangan menghapus atau mematikan project dummy sebelum seluruh order aktif dan de
 
 - QRIS berhasil dibuat.
 - Deposit masuk ke tabel database kamu.
+- QRIS pending dapat dibuka kembali dari History Deposit.
+- History deposit memiliki filter status dan pagination maksimal 10 transaksi per halaman.
 - Pembayaran sukses mengubah status deposit.
 - Saldo bertambah satu kali.
 - Bonus promo deposit mengikuti `percentage`, `min_deposit`, dan `max_bonus`.
-- Deposit expired dibatalkan.
+- Deposit belum dibayar otomatis dibatalkan setelah 30 menit.
 
 ### Admin
 
@@ -1078,15 +1282,14 @@ Script tersebut juga belum mengatur `TELEGRAM_CHANNEL_URL`, `TELEGRAM_CS_URL`, d
 
 ## 15. Pemeriksaan Keamanan Sebelum Digunakan User
 
-Source saat ini memiliki beberapa bagian yang perlu diperkeras sebelum menangani saldo dan transaksi production:
+Source saat ini memiliki beberapa bagian yang tetap perlu diaudit sebelum menangani saldo dan transaksi production:
 
 ```text
-Profile check-in menambah saldo langsung dari frontend.
 Beberapa Edge Functions menerima userId atau orderId dari request tanpa memvalidasi Telegram initData.
 Sebagian Edge Functions menggunakan verify_jwt=false dan harus melakukan validasi Telegram secara internal.
 ```
 
-Jangan membuat policy RLS yang mengizinkan anon mengubah saldo user secara bebas hanya agar fitur check-in berjalan. Untuk production, pindahkan proses check-in ke Edge Function tervalidasi dan tambahkan validasi Telegram pada seluruh aksi yang mengubah saldo, membuat order, membatalkan order, mengklaim voucher, atau membuat deposit.
+Profile check-in sudah diproses oleh Edge Function `daily-checkin` dan memvalidasi Telegram initData. Tetap tambahkan validasi Telegram pada seluruh aksi lain yang mengubah saldo, membuat order, membatalkan order, mengklaim voucher, atau membuat deposit.
 
 Sebelum mengaktifkan webhook production, lakukan audit khusus terhadap:
 
@@ -1098,7 +1301,7 @@ order-action
 claim-voucher
 create-qris
 check-qris
-Profile check-in
+daily-checkin
 RLS policy seluruh tabel public
 ```
 
@@ -1131,7 +1334,115 @@ Invoke-RestMethod `
 
 Jangan melakukan rollback Pakasir ketika masih ada deposit pending. Selesaikan atau batalkan deposit pending terlebih dahulu agar saldo tidak diproses ke project yang salah.
 
-## 17. Checklist Akhir untuk Kamu
+## 17. Troubleshooting Umum
+
+### Mini App Masih Menampilkan Versi Lama Setelah Deploy
+
+Telegram dapat menyimpan cache Mini App. Setelah deploy frontend:
+
+```text
+1. Tutup Mini App sepenuhnya.
+2. Buka kembali melalui tombol bot.
+3. Jika masih lama, tutup aplikasi Telegram lalu buka kembali.
+4. Pastikan URL production/alias mengarah ke deployment terbaru.
+```
+
+Periksa bundle production:
+
+```powershell
+Invoke-WebRequest -UseBasicParsing "https://FINAL_MINI_APP_URL"
+```
+
+### Muncul `Edge Function returned a non-2xx status code`
+
+Pesan tersebut berarti Edge Function mengembalikan HTTP error. Periksa:
+
+```text
+1. Secret provider sudah dipasang pada project yang benar.
+2. Function terkait sudah di-deploy setelah perubahan source.
+3. supabase/.temp/project-ref menunjuk ke REAL_PROJECT_REF.
+4. Saldo akun provider masih tersedia.
+5. Struktur tabel dan kolom sesuai tutorial.
+6. Log function pada Supabase Dashboard.
+```
+
+Function yang umumnya perlu diperiksa:
+
+```text
+Order/katalog: sms-catalog, buy-number
+OTP/status: check-sms, user-data
+Refund/selesai/resend: cancel-order, order-action
+Deposit: create-qris, check-qris, pakasir-webhook
+Voucher: claim-voucher
+Saldo harian: daily-checkin
+```
+
+### Server 2 Menampilkan Stok tetapi Order Gagal
+
+Periksa:
+
+```text
+API_KEY_SMSCODE benar dan masih aktif.
+Saldo akun Server 2 cukup.
+Function sms-catalog dan buy-number memakai source terbaru.
+Frontend terbaru sudah mengirim product_id pilihan user.
+```
+
+Deploy ulang:
+
+```powershell
+npx supabase functions deploy sms-catalog --project-ref REAL_PROJECT_REF --no-verify-jwt
+npx supabase functions deploy buy-number --project-ref REAL_PROJECT_REF --no-verify-jwt
+```
+
+### OTP Server 2 Sudah Ada di Provider tetapi Belum Tampil
+
+Source terbaru membaca order aktif Server 2, menyimpan `otp_code` dan `otp_message`, lalu menampilkannya pada active order dan history.
+
+Deploy ulang:
+
+```powershell
+npx supabase functions deploy check-sms --project-ref REAL_PROJECT_REF --no-verify-jwt
+npx supabase functions deploy user-data --project-ref REAL_PROJECT_REF --no-verify-jwt
+```
+
+Kemudian buka ulang active order atau History Order. Jangan menghapus isi `orders.sms_code`, karena field tersebut menyimpan seluruh riwayat OTP.
+
+### Notifikasi Suara OTP Tidak Berbunyi
+
+Pastikan file berikut tersedia pada source dan ikut terdeploy:
+
+```text
+public/audio/otp-notification.mp3
+```
+
+Beberapa perangkat memblokir audio sampai user menyentuh Mini App minimal satu kali. Buka Mini App, tekan salah satu tombol, lalu biarkan aplikasi melakukan polling OTP.
+
+### Bot `/start` Tidak Membalas
+
+Periksa:
+
+```text
+Function telegram-bot ACTIVE.
+TELEGRAM_BOT_TOKEN benar.
+TELEGRAM_WEBHOOK_SECRET sama antara Supabase secret dan setWebhook.
+Webhook menunjuk ke REAL_PROJECT_REF.
+getWebhookInfo tidak menampilkan last_error_message.
+```
+
+### Mini App Berhenti di `Menghubungkan akun Telegram...`
+
+Periksa:
+
+```text
+Mini App dibuka dari tombol web_app bot, bukan browser biasa.
+TELEGRAM_BOT_TOKEN dan TELEGRAM_BOT_ID benar.
+MINI_APP_URL sama dengan URL HTTPS frontend final.
+Function telegram-auth sudah di-deploy.
+VITE_SUPABASE_URL dan VITE_SUPABASE_ANON_KEY menunjuk ke project yang sama.
+```
+
+## 18. Checklist Akhir untuk Kamu
 
 Gunakan daftar ini tepat sebelum aplikasi diumumkan ke user:
 
@@ -1140,6 +1451,8 @@ Gunakan daftar ini tepat sebelum aplikasi diumumkan ke user:
 [ ] Setelah kamu menjalankan supabase link, supabase/.temp/project-ref menunjuk ke REAL_PROJECT_REF.
 [ ] Tabel dan kolom database kamu sesuai langkah 5.
 [ ] promo_settings memakai percentage dan max_bonus, bukan bonus_percentage.
+[ ] Migration feature_settings sudah dijalankan dan menu Fitur & Maintenance dapat disimpan.
+[ ] Saldo harian memakai cooldown tepat 24 jam berdasarkan `checkin.created_at`.
 [ ] Vercel/VPS memakai VITE_SUPABASE_URL dan anon key project kamu.
 [ ] Semua Supabase secrets berasal dari akun kamu.
 [ ] TELEGRAM_CHANNEL_URL dan TELEGRAM_CS_URL sudah benar.
@@ -1149,6 +1462,10 @@ Gunakan daftar ini tepat sebelum aplikasi diumumkan ke user:
 [ ] /start menampilkan tiga tombol yang benar.
 [ ] /admin hanya dapat dibuka oleh ADMIN_TELEGRAM_IDS.
 [ ] Admin dapat tambah/kurangi saldo tanpa membuat saldo minus.
-[ ] Order, OTP, refund, voucher, promo, dan deposit telah diuji.
+[ ] Server 2 menampilkan otp_message serta menahan refund selama 2 menit.
+[ ] Semua OTP tersimpan di History Order dan notifikasi suara bekerja.
+[ ] History order/deposit menampilkan filter dan pagination 10 transaksi.
+[ ] Order 25 menit dan deposit 30 menit menyelesaikan lifecycle dengan benar.
+[ ] Order, OTP, refund, voucher, promo, maintenance fitur, dan deposit telah diuji.
 [ ] Tidak ada order aktif atau deposit pending yang tertinggal di project dummy.
 ```

@@ -13,8 +13,8 @@ import {
 
 export const ORDER_LIFETIME_MS = 25 * 60 * 1000
 
-const saveOtp = async (supabase: any, order: any, code: string) => {
-  const otpState = appendOtpCode(order.sms_code, code)
+const saveOtp = async (supabase: any, order: any, code: string, message: unknown = null) => {
+  const otpState = appendOtpCode(order.sms_code, code, message)
   const { error } = await supabase
     .from('orders')
     .update({ sms_code: serializeOtpState(otpState) })
@@ -120,7 +120,12 @@ export const expireOrderIfNeeded = async (supabase: any, order: any) => {
 
       if (remoteStatus === 'OTP_RECEIVED') {
         if (remoteOrder?.otp_code) {
-          const orderWithOtp = await saveOtp(supabase, order, String(remoteOrder.otp_code))
+          const orderWithOtp = await saveOtp(
+            supabase,
+            order,
+            String(remoteOrder.otp_code),
+            remoteOrder.otp_message,
+          )
           await finishRemoteOrder(orderWithOtp)
           return markCompleted(supabase, orderWithOtp)
         }

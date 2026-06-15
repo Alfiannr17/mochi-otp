@@ -529,3 +529,9 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/admin-api/deno.json"
 entrypoint = "./functions/admin-api/index.ts"
+
+[functions.daily-checkin]
+enabled = true
+verify_jwt = false
+import_map = "./functions/daily-checkin/deno.json"
+entrypoint = "./functions/daily-checkin/index.ts"

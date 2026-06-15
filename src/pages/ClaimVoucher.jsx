@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import WebApp from '../lib/telegram';
 import { GiftIcon } from '../components/Icons';
 import { useMochiDialog } from '../hooks/useMochiDialog';
+import MochiLoader from '../components/MochiLoader';
 
 const getFunctionErrorMessage = async (error, fallback) => {
   try {
@@ -63,23 +64,24 @@ export default function ClaimVoucher() {
       <h1 className="text-2xl font-black mb-1 flex items-center gap-2"><GiftIcon className="w-7 h-7" /> Kode Redeem / Voucher</h1>
       <p className="text-xs mb-6 font-bold text-gray-600">Masukkan kode voucher kamu untuk mendapatkan saldo gratis secara instan.</p>
 
-      <form onSubmit={handleClaim} className="space-y-6">
-        <div className="border-2 border-black rounded-xl bg-white shadow-neo p-4">
-          <label className="text-xs font-black block mb-2 uppercase tracking-wider">Masukkan Kode Voucher</label>
-          <input 
-            type="text" 
-            placeholder="CONTOH: MOCHICUAN" 
-            value={code}
-            onChange={(e) => setCode(e.target.value.toUpperCase())}
-            disabled={loading}
-            className="w-full border-2 border-black rounded-lg py-3 px-4 font-black text-center text-lg tracking-widest outline-none bg-mochi-bg uppercase focus:bg-white transition-colors"
-          />
-        </div>
+      {loading ? (
+        <MochiLoader message="Memproses klaim voucher..." />
+      ) : (
+        <form onSubmit={handleClaim} className="space-y-6">
+          <div className="border-2 border-black rounded-xl bg-white shadow-neo p-4">
+            <label className="text-xs font-black block mb-2 uppercase tracking-wider">Masukkan Kode Voucher</label>
+            <input
+              type="text"
+              placeholder="CONTOH: MOCHICUAN"
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
+              className="w-full border-2 border-black rounded-lg py-3 px-4 font-black text-center text-lg tracking-widest outline-none bg-mochi-bg uppercase focus:bg-white transition-colors"
+            />
+          </div>
 
-        <MochiButton type="submit" className={loading ? 'animate-pulse' : ''}>
-          {loading ? 'MEMPROSES KLAIM...' : 'REDEEM KODE VOUCHER'}
-        </MochiButton>
-      </form>
+          <MochiButton type="submit">REDEEM KODE VOUCHER</MochiButton>
+        </form>
+      )}
 
       <div className="text-center mt-6">
         <button onClick={() => navigate(-1)} className="font-bold text-sm underline">Kembali</button>

@@ -17,29 +17,43 @@ const updateOrder = async (supabase: any, order: any, values: Record<string, unk
 }
 
 const extractSmsCodeOtps = (remoteOrder: any) => {
-  const candidates = [
-    remoteOrder?.otp_code,
-    remoteOrder?.sms_code,
-    remoteOrder?.otp,
-    remoteOrder?.otp?.code,
-    remoteOrder?.sms?.code,
-    ...(Array.isArray(remoteOrder?.messages)
-      ? remoteOrder.messages.flatMap((message: any) => [
-        message?.otp_code,
-        message?.sms_code,
-        message?.otp,
-        message?.code,
-      ])
-      : []),
+  const records = [
+    remoteOrder,
+    ...(Array.isArray(remoteOrder?.messages) ? remoteOrder.messages : []),
   ]
 
-  return candidates
-    .filter((code) => ['string', 'number'].includes(typeof code))
-    .map((code) => String(code).trim())
-    .filter(Boolean)
+  return records.flatMap((record: any) => {
+    const code = [
+      record?.otp_code,
+      record?.sms_code,
+      record?.otp,
+      record?.otp?.code,
+      record?.sms?.code,
+      record?.code,
+    ].find((candidate) => ['string', 'number'].includes(typeof candidate))
+    const normalizedCode = String(code ?? '').trim()
+    if (!normalizedCode) return []
+
+    const message = [
+      record?.otp_message,
+      record?.sms_message,
+      record?.otp?.message,
+      record?.sms?.message,
+      record?.sms?.text,
+    ].find((candidate) => typeof candidate === 'string' && candidate.trim())
+
+    return [{
+      code: normalizedCode,
+      message: typeof message === 'string' ? message.trim() : null,
+    }]
+  })
 }
 
-const saveOtpCodes = async (supabase: any, order: any, codes: string[]) => {
+const saveOtpCodes = async (
+  supabase: any,
+  order: any,
+  entries: { code: string; message?: string | null }[],
+) => {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const { data: latestOrder, error: latestError } = await supabase
       .from('orders')
@@ -50,7 +64,9 @@ const saveOtpCodes = async (supabase: any, order: any, codes: string[]) => {
     if (latestError) throw latestError
 
     let state = parseOtpState(latestOrder.sms_code)
-    for (const code of codes) state = appendOtpCode(serializeOtpState(state), code)
+    for (const entry of entries) {
+      state = appendOtpCode(serializeOtpState(state), entry.code, entry.message)
+    }
 
     const serializedState = serializeOtpState(state)
     if (serializedState === latestOrder.sms_code) return latestOrder
@@ -91,17 +107,18 @@ export const syncOrderProviderStatus = async (supabase: any, originalOrder: any)
   if (order?.status !== 'active') return { order }
 
   const otpState = parseOtpState(order.sms_code)
-  if (otpState.codes.length > 0 && !otpState.waiting) return { order }
+  const remoteActivation = parseActivationId(order.activation_id)
+  const server2MessageIncomplete = remoteActivation.provider === 'smscode' &&
+    otpState.codes.some((_: string, index: number) => !otpState.messages[index])
+  if (otpState.codes.length > 0 && !otpState.waiting && !server2MessageIncomplete) return { order }
 
   try {
-    const remoteActivation = parseActivationId(order.activation_id)
-
     if (remoteActivation.provider === 'smscode') {
       const remoteOrder = await getSmsCodeOrder(remoteActivation.id)
       const remoteStatus = String(remoteOrder?.status ?? '').toUpperCase()
-      const remoteCodes = extractSmsCodeOtps(remoteOrder)
-      let syncedOrder = remoteCodes.length > 0
-        ? await saveOtpCodes(supabase, order, remoteCodes)
+      const remoteOtps = extractSmsCodeOtps(remoteOrder)
+      let syncedOrder = remoteOtps.length > 0
+        ? await saveOtpCodes(supabase, order, remoteOtps)
         : order
 
       if (remoteStatus === 'COMPLETED') {
@@ -119,7 +136,7 @@ export const syncOrderProviderStatus = async (supabase: any, originalOrder: any)
         order: await saveOtpCodes(
           supabase,
           order,
-          [remoteStatus.slice('STATUS_OK:'.length)],
+          [{ code: remoteStatus.slice('STATUS_OK:'.length) }],
         ),
       }
     }

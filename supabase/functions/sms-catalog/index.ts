@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3"
 import {
   calculateMochiPrice,
   fetchSmsJson,
@@ -9,6 +10,7 @@ import {
 import { calculateIdrMochiPrice } from "../_shared/pricing.ts"
 import { getSmsCodeCatalog, getSmsCodeProducts } from "../_shared/smscode.ts"
 import { getPublicProviderError } from "../_shared/public-error.ts"
+import { getFeatureSetting, getProviderFeatureKey } from "../_shared/feature-settings.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -26,6 +28,21 @@ serve(async (req) => {
 
   try {
     const { action, provider = 'smsbower', serviceCode, serviceId, countryId } = await req.json()
+    if (!['smsbower', 'smscode'].includes(provider)) {
+      return jsonResponse({ error: 'Server order tidak valid' }, 400)
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+    )
+    const feature = await getFeatureSetting(supabase, getProviderFeatureKey(provider))
+    if (!feature.is_active) {
+      return jsonResponse({
+        error: feature.maintenance_message,
+        maintenance: true,
+      }, 503)
+    }
 
     if (provider === 'smscode') {
       if (action === 'getCatalog') {

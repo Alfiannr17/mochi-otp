@@ -8,6 +8,7 @@ import { supabase } from '../lib/supabase';
 import { fetchUserData } from '../lib/userData';
 import { sanitizePublicError } from '../lib/publicError';
 import QRCode from 'qrcode';
+import MochiLoader from '../components/MochiLoader';
 
 const DEPOSIT_LIFETIME_MS = 30 * 60 * 1000;
 
@@ -139,7 +140,7 @@ export default function DepositDetail() {
     return `${minutes}:${remainingSeconds}`;
   };
 
-  if (loading) return <div className="py-16 text-center font-black animate-pulse">Memuat deposit...</div>;
+  if (loading) return <MochiLoader message="Memuat deposit..." />;
   if (!deposit) return <div className="py-16 text-center font-black">Deposit tidak ditemukan.</div>;
 
   const isSuccess = deposit.status === 'success';

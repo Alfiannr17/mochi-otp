@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3"
 import { validateTelegramInitData } from "../_shared/telegram.ts"
 import { syncDepositStatus } from "../_shared/deposit-lifecycle.ts"
 import { syncOrderProviderStatus } from "../_shared/order-sync.ts"
+import { getFeatureSettings } from "../_shared/feature-settings.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -24,7 +25,7 @@ serve(async (req) => {
       return jsonResponse({ error: 'Data autentikasi Telegram tidak tersedia' }, 400)
     }
 
-    if (!['orders', 'order', 'deposits', 'deposit'].includes(action)) {
+    if (!['orders', 'order', 'deposits', 'deposit', 'features'].includes(action)) {
       return jsonResponse({ error: 'Aksi data tidak valid' }, 400)
     }
 
@@ -38,6 +39,13 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     )
+
+    if (action === 'features') {
+      return jsonResponse({
+        success: true,
+        features: await getFeatureSettings(supabase),
+      })
+    }
 
     if (action === 'orders') {
       const { data, error } = await supabase

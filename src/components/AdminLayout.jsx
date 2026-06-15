@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { CloseIcon, DashboardIcon, GiftIcon, MenuIcon, OrderIcon, UsersIcon, WalletIcon } from './Icons';
+import { CloseIcon, DashboardIcon, GiftIcon, MenuIcon, OrderIcon, SettingsIcon, UsersIcon, WalletIcon } from './Icons';
 import { adminApi } from '../lib/adminApi';
 import MochiButton from './MochiButton';
+import MochiLoader from './MochiLoader';
 
 export default function AdminLayout() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -38,15 +39,14 @@ export default function AdminLayout() {
     { path: '/admin/orders', name: 'Data Order', icon: OrderIcon },
     { path: '/admin/deposits', name: 'Deposit & QRIS', icon: WalletIcon },
     { path: '/admin/users', name: 'Manajemen User', icon: UsersIcon },
-    { path: '/admin/vouchers', name: 'Voucher & Promo', icon: GiftIcon }
+    { path: '/admin/vouchers', name: 'Voucher & Promo', icon: GiftIcon },
+    { path: '/admin/features', name: 'Fitur & Maintenance', icon: SettingsIcon },
   ];
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-mochi-bg font-mono flex items-center justify-center p-5">
-        <div className="w-full max-w-md border-4 border-black rounded-2xl bg-white p-8 text-center font-black shadow-neo">
-          Memverifikasi akses admin...
-        </div>
+      <div className="min-h-screen bg-mochi-bg font-mono">
+        <MochiLoader fullScreen message="Memverifikasi akses admin..." />
       </div>
     );
   }

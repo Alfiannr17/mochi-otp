@@ -46,14 +46,16 @@ serve(async (req) => {
     if (order.status === 'canceled') return jsonResponse({ error: 'Order sudah dibatalkan' }, 400)
     if (order.status === 'completed') return jsonResponse({ success: true, status: 'completed' })
     const otpState = parseOtpState(order.sms_code)
+    const remoteActivation = parseActivationId(activationId)
     if (action === 'resend' && otpState.codes.length === 0) {
       return jsonResponse({ error: 'OTP pertama belum diterima' }, 400)
     }
     if (action === 'resend' && otpState.waiting) {
       return jsonResponse({ error: 'Permintaan OTP baru masih diproses' }, 400)
     }
-
-    const remoteActivation = parseActivationId(activationId)
+    if (action === 'finish' && remoteActivation.provider === 'smscode' && otpState.waiting) {
+      return jsonResponse({ error: 'Tunggu OTP baru masuk sebelum menyelesaikan order' }, 400)
+    }
 
     if (remoteActivation.provider === 'smscode') {
       if (action === 'finish') await finishSmsCodeOrder(remoteActivation.id)

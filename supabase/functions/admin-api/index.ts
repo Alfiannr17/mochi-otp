@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3"
 import { requireAdminTelegramUser } from "../_shared/admin.ts"
+import { FEATURE_DEFAULTS, getFeatureSettings } from "../_shared/feature-settings.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -138,6 +139,36 @@ serve(async (req) => {
           },
         },
       })
+    }
+
+    if (action === 'features.list') {
+      return jsonResponse({
+        success: true,
+        features: await getFeatureSettings(supabase),
+      })
+    }
+
+    if (action === 'features.save') {
+      const featureKey = String(payload.feature_key ?? '')
+      if (!(featureKey in FEATURE_DEFAULTS)) throw new Error('Fitur tidak valid')
+
+      const fallback = FEATURE_DEFAULTS[featureKey as keyof typeof FEATURE_DEFAULTS]
+      const maintenanceMessage =
+        String(payload.maintenance_message ?? '').trim() || fallback.maintenance_message
+
+      const { data, error } = await supabase
+        .from('feature_settings')
+        .upsert({
+          feature_key: featureKey,
+          is_active: Boolean(payload.is_active),
+          maintenance_message: maintenanceMessage,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'feature_key' })
+        .select('feature_key,is_active,maintenance_message,updated_at')
+        .single()
+
+      if (error) throw error
+      return jsonResponse({ success: true, feature: data })
     }
 
     if (action === 'users.list') {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { adminApi } from '../../lib/adminApi';
 import { DashboardIcon, GiftIcon, OrderIcon, UsersIcon, WalletIcon } from '../../components/Icons';
+import MochiLoader from '../../components/MochiLoader';
 
 const formatRupiah = (value) => `Rp.${Number(value || 0).toLocaleString('id-ID')}`;
 
@@ -45,7 +46,7 @@ export default function AdminDashboard() {
       {errorMessage && <div className="mb-5 border-4 border-black rounded-xl bg-red-300 p-4 font-bold shadow-neo">{errorMessage}</div>}
 
       {!summary && !errorMessage ? (
-        <div className="border-4 border-black rounded-xl bg-white p-8 text-center font-black shadow-neo">Memuat statistik...</div>
+        <MochiLoader message="Memuat statistik..." />
       ) : summary ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
           {cards.map(({ label, value, detail, icon: Icon, color }) => (

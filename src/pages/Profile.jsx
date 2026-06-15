@@ -1,44 +1,81 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getTelegramUser } from '../lib/telegram';
+import WebApp, { getTelegramUser } from '../lib/telegram';
 import MochiButton from '../components/MochiButton';
 import { supabase } from '../lib/supabase';
 import { GiftIcon, WalletIcon } from '../components/Icons';
 import { useMochiDialog } from '../hooks/useMochiDialog';
+import MochiLoader from '../components/MochiLoader';
+
+const formatCooldown = (totalSeconds) => {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return [hours, minutes, seconds].map((value) => String(value).padStart(2, '0')).join(':');
+};
+
+const getFunctionErrorMessage = async (error, fallback) => {
+  try {
+    const payload = await error?.context?.clone?.().json();
+    return payload?.error || fallback;
+  } catch {
+    return error?.message || fallback;
+  }
+};
 
 export default function Profile() {
   const navigate = useNavigate();
   const dialog = useMochiDialog();
   const [balance, setBalance] = useState(0);
-  const [canCheckIn, setCanCheckIn] = useState(false);
+  const [nextCheckInAt, setNextCheckInAt] = useState(null);
+  const [checkInError, setCheckInError] = useState('');
+  const [claiming, setClaiming] = useState(false);
+  const [clock, setClock] = useState(0);
   const [showTerms, setShowTerms] = useState(false);
+  const [loading, setLoading] = useState(true);
   
   // Ambil data user Telegram
   const tgUser = getTelegramUser();
-  const userId = tgUser?.id;
+  const secondsUntilCheckIn = nextCheckInAt
+    ? Math.max(0, Math.ceil((new Date(nextCheckInAt).getTime() - clock) / 1000))
+    : 0;
+  const canCheckIn = !checkInError && secondsUntilCheckIn === 0;
 
   useEffect(() => {
     let active = true;
 
     const loadProfile = async () => {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      try {
+        if (!WebApp.initData) throw new Error('Data autentikasi Telegram tidak tersedia. Buka kembali Mini App dari bot.');
+        const { data, error } = await supabase.functions.invoke('daily-checkin', {
+          body: { initData: WebApp.initData, action: 'status' },
+        });
+        if (error) throw new Error(await getFunctionErrorMessage(error, 'Gagal memuat saldo harian.'));
 
-      const [userResult, checkInResult] = await Promise.all([
-        supabase.from('users').select('balance').eq('id', userId).single(),
-        supabase.from('checkin').select('created_at').eq('user_id', userId).gte('created_at', today.toISOString()).limit(1),
-      ]);
-
-      if (!active) return;
-      if (userResult.data) setBalance(Number(userResult.data.balance || 0));
-      setCanCheckIn(checkInResult.data?.length === 0);
+        if (!active) return;
+        setBalance(Number(data?.balance || 0));
+        setNextCheckInAt(data?.nextCheckInAt || null);
+        setClock(Date.now());
+        setCheckInError('');
+      } catch (error) {
+        if (active) setCheckInError(error.message || 'Gagal memuat saldo harian.');
+      } finally {
+        if (active) setLoading(false);
+      }
     };
 
     loadProfile();
     return () => {
       active = false;
     };
-  }, [userId]);
+  }, []);
+
+  useEffect(() => {
+    if (!nextCheckInAt) return undefined;
+
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [nextCheckInAt]);
 
   useEffect(() => {
     if (!showTerms) return undefined;
@@ -51,19 +88,31 @@ export default function Profile() {
   }, [showTerms]);
 
   const handleCheckIn = async () => {
-    // Random saldo antara 50 - 250
-    const bonus = Math.floor(Math.random() * (250 - 50 + 1)) + 50;
-    
-    // Insert ke tabel checkin & update tabel users (ideal nya menggunakan database function/trigger untuk keamanan, tapi ini versi frontend logic)
-    await supabase.from('checkin').insert({ user_id: userId, amount: bonus });
-    await supabase.from('users').update({ balance: balance + bonus }).eq('id', userId);
-    
-    setBalance(prev => prev + bonus);
-    setCanCheckIn(false);
-    await dialog.alert(`Kamu mendapat saldo gratis Rp.${bonus.toLocaleString('id-ID')}.`, {
-      title: 'Check-in Berhasil',
-    });
+    setClaiming(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('daily-checkin', {
+        body: { initData: WebApp.initData, action: 'claim' },
+      });
+      if (error) throw new Error(await getFunctionErrorMessage(error, 'Saldo harian gagal diproses.'));
+
+      const bonus = Number(data?.bonus || 0);
+      setBalance(Number(data?.balance || 0));
+      setNextCheckInAt(data?.nextCheckInAt || null);
+      setClock(Date.now());
+      setCheckInError('');
+      await dialog.alert(`Kamu mendapat saldo gratis Rp.${bonus.toLocaleString('id-ID')}. Saldo berikutnya tersedia lagi 24 jam dari sekarang.`, {
+        title: 'Check-in Berhasil',
+      });
+    } catch (error) {
+      await dialog.alert(error.message || 'Saldo harian gagal diproses.', {
+        title: 'Check-in Gagal',
+      });
+    } finally {
+      setClaiming(false);
+    }
   };
+
+  if (loading) return <MochiLoader message="Memuat profile..." />;
 
   return (
     <div className="pb-8">
@@ -86,7 +135,10 @@ export default function Profile() {
         <h2 className="text-xl font-bold text-center">
           {[tgUser?.first_name, tgUser?.last_name].filter(Boolean).join(' ') || 'Nama Telegram'}
         </h2>
-        <p className="text-sm">@{tgUser?.username || 'username_tidak_tersedia'}</p>
+        <div className="mt-1 text-center text-sm font-bold space-y-0.5">
+          <p>Username: @{tgUser?.username || 'tidak_tersedia'}</p>
+          <p>Telegram ID: {tgUser?.id || 'tidak_tersedia'}</p>
+        </div>
       </div>
 
       {/* Kartu Saldo */}
@@ -106,11 +158,23 @@ export default function Profile() {
       {/* Tombol Check-in */}
       <button 
         onClick={handleCheckIn}
-        disabled={!canCheckIn}
+        disabled={!canCheckIn || claiming}
         className={`w-full border-2 border-black rounded-xl py-3 font-bold transition-all ${canCheckIn ? 'bg-white shadow-neo active:translate-y-1 active:shadow-none' : 'bg-gray-200 text-gray-500 cursor-not-allowed'}`}
       >
-        {canCheckIn ? 'Ambil Saldo Harian (50-250)' : 'Sudah Ambil Saldo Hari Ini'}
+        {claiming
+          ? 'Memproses Saldo Harian...'
+          : checkInError
+            ? 'Saldo Harian Tidak Tersedia'
+            : canCheckIn
+              ? 'Ambil Saldo Harian (50-250)'
+              : `Tersedia Lagi Dalam ${formatCooldown(secondsUntilCheckIn)}`}
       </button>
+      {checkInError && <p className="mt-3 text-xs font-bold text-center text-red-600">{checkInError}</p>}
+      {!canCheckIn && !checkInError && nextCheckInAt && (
+        <p className="mt-3 text-xs font-bold text-center">
+          Klaim berikutnya: {new Date(nextCheckInAt).toLocaleString('id-ID')}
+        </p>
+      )}
 
       <button 
         onClick={() => navigate('/claim-voucher')}

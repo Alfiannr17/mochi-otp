@@ -6,6 +6,8 @@ import { cancelAndRefundOrder } from "../_shared/order-expiry.ts"
 import { parseOtpState } from "../_shared/otp-history.ts"
 import { getPublicProviderError } from "../_shared/public-error.ts"
 
+const SERVER2_CANCEL_DELAY_MS = 2 * 60 * 1000
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -31,7 +33,7 @@ serve(async (req) => {
 
     const { data: order, error: orderError } = await supabase
       .from('orders')
-      .select('status, activation_id, sms_code')
+      .select('status, activation_id, sms_code, created_at')
       .eq('id', orderId)
       .single()
 
@@ -45,6 +47,16 @@ serve(async (req) => {
 
     const remoteActivation = parseActivationId(activationId)
     if (remoteActivation.provider === 'smscode') {
+      const createdAt = new Date(order.created_at).getTime()
+      const cancelAvailableAt = createdAt + SERVER2_CANCEL_DELAY_MS
+      if (Number.isFinite(createdAt) && Date.now() < cancelAvailableAt) {
+        const retryAfterSeconds = Math.ceil((cancelAvailableAt - Date.now()) / 1000)
+        return jsonResponse({
+          error: `Refund Server 2 baru tersedia setelah 2 menit. Tunggu ${retryAfterSeconds} detik lagi.`,
+          retryAfterSeconds,
+        }, 400)
+      }
+
       const canceled = await cancelSmsCodeOrder(remoteActivation.id)
       if (String(canceled?.status).toUpperCase() !== 'CANCELED') {
         return jsonResponse({ error: 'Server menolak pembatalan order. Silakan coba lagi.' }, 400)

@@ -3,24 +3,29 @@ const OTP_STATE_PREFIX = '__MOCHI_OTP_STATE__:';
 
 export const parseOtpState = (value) => {
   const smsCode = String(value ?? '');
-  if (!smsCode) return { codes: [], waiting: false };
-  if (smsCode === RESEND_PENDING_CODE) return { codes: [], waiting: true };
+  if (!smsCode) return { codes: [], messages: [], waiting: false };
+  if (smsCode === RESEND_PENDING_CODE) return { codes: [], messages: [], waiting: true };
 
   if (smsCode.startsWith(OTP_STATE_PREFIX)) {
     try {
       const state = JSON.parse(smsCode.slice(OTP_STATE_PREFIX.length));
+      const codes = Array.isArray(state?.codes)
+        ? state.codes.map((code) => String(code)).filter(Boolean)
+        : [];
       return {
-        codes: Array.isArray(state?.codes)
-          ? state.codes.map((code) => String(code)).filter(Boolean)
-          : [],
+        codes,
+        messages: codes.map((_, index) => {
+          const message = Array.isArray(state?.messages) ? String(state.messages[index] ?? '').trim() : '';
+          return message || null;
+        }),
         waiting: Boolean(state?.waiting),
       };
     } catch {
-      return { codes: [], waiting: false };
+      return { codes: [], messages: [], waiting: false };
     }
   }
 
-  return { codes: [smsCode], waiting: false };
+  return { codes: [smsCode], messages: [null], waiting: false };
 };
 
 export const getLatestOtp = (value) => {

@@ -3,6 +3,7 @@ import { adminApi } from '../../lib/adminApi';
 import { OrderIcon } from '../../components/Icons';
 import AdminFilterBar from '../../components/admin/AdminFilterBar';
 import { parseOtpState } from '../../lib/otpHistory';
+import MochiLoader from '../../components/MochiLoader';
 
 const formatPhoneNumber = (phoneNumber) => {
   if (!phoneNumber) return 'Pending';
@@ -63,12 +64,6 @@ export default function AdminOrders() {
     return status || 'Unknown';
   };
 
-const getOtpLabel = (smsCode) => {
-    const state = parseOtpState(smsCode);
-    if (state.codes.length === 0) return state.waiting ? 'Menunggu SMS baru' : '-';
-    return `${state.codes.join(', ')}${state.waiting ? ' (menunggu SMS baru)' : ''}`;
-  };
-
   const filteredOrders = useMemo(() => {
     const query = search.trim().toLowerCase();
     return orders.filter((order) => {
@@ -118,7 +113,7 @@ const getOtpLabel = (smsCode) => {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan="6" className="p-8 text-center font-bold">Memuat data order...</td></tr>
+              <tr><td colSpan="6"><MochiLoader compact message="Memuat data order..." /></td></tr>
             ) : filteredOrders.length === 0 ? (
               <tr><td colSpan="6" className="p-8 text-center font-bold">Order tidak ditemukan.</td></tr>
             ) : filteredOrders.map((o) => (
@@ -137,8 +132,31 @@ const getOtpLabel = (smsCode) => {
                 <td className="p-3 border-r-2 border-black font-bold text-xs whitespace-nowrap">
                   {formatPhoneNumber(o.phone_number)}
                 </td>
-                <td className="p-3 border-r-2 border-black font-black text-purple-600 tracking-widest text-sm">
-                  {getOtpLabel(o.sms_code)}
+                <td className="p-3 border-r-2 border-black text-sm min-w-[240px]">
+                  {parseOtpState(o.sms_code).codes.length === 0 ? (
+                    <span className="font-black text-gray-500">
+                      {parseOtpState(o.sms_code).waiting ? 'Menunggu SMS baru' : '-'}
+                    </span>
+                  ) : (
+                    <div className="space-y-2">
+                      {parseOtpState(o.sms_code).codes.map((code, index) => {
+                        const state = parseOtpState(o.sms_code);
+                        return (
+                          <div key={`${code}-${index}`} className="border-2 border-black rounded-lg bg-mochi-bg p-2">
+                            <span className="block font-black text-purple-600 tracking-widest">{code}</span>
+                            {state.messages[index] && (
+                              <span className="block mt-1 text-[10px] font-bold text-black break-words">
+                                {state.messages[index]}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {parseOtpState(o.sms_code).waiting && (
+                        <span className="block text-[10px] font-bold text-gray-500">Menunggu SMS baru...</span>
+                      )}
+                    </div>
+                  )}
                 </td>
                 <td className="p-3 text-center">
                   <span className={`px-2 py-1 border-2 border-black rounded font-bold text-[10px] uppercase shadow-neo ${getBadgeColor(o.status)}`}>

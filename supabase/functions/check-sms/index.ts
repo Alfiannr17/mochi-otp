@@ -40,20 +40,22 @@ serve(async (req) => {
     const otpState = parseOtpState(syncedOrder.sms_code)
 
     if (syncedOrder.status === 'completed') {
-      return jsonResponse({ status: 'completed', codes: otpState.codes })
+      return jsonResponse({ status: 'completed', codes: otpState.codes, messages: otpState.messages })
     }
     if (syncedOrder.status === 'canceled') {
-      return jsonResponse({ status: 'canceled', codes: otpState.codes })
+      return jsonResponse({ status: 'canceled', codes: otpState.codes, messages: otpState.messages })
     }
     if (otpState.codes.length > 0 && !otpState.waiting) {
       return jsonResponse({
         status: 'success',
         code: otpState.codes.at(-1),
         codes: otpState.codes,
+        message: otpState.messages.at(-1),
+        messages: otpState.messages,
       })
     }
     if (providerError) return jsonResponse({ error: providerError, retryable: true }, 503)
-    return jsonResponse({ status: 'waiting', codes: otpState.codes })
+    return jsonResponse({ status: 'waiting', codes: otpState.codes, messages: otpState.messages })
   } catch (error) {
     console.error('check-sms provider error:', error)
     return jsonResponse({

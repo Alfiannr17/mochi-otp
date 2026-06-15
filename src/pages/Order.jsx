@@ -6,10 +6,13 @@ import { ArrowLeftIcon, SearchIcon, ServiceIcon } from '../components/Icons';
 import { useMochiDialog } from '../hooks/useMochiDialog';
 import { supabase } from '../lib/supabase';
 import { sanitizePublicError } from '../lib/publicError';
+import { fetchUserData } from '../lib/userData';
+import { normalizeFeatureSettings } from '../lib/featureSettings';
+import MochiLoader from '../components/MochiLoader';
 
 const providers = [
-  { id: 'smsbower', name: 'Server 1' },
-  { id: 'smscode', name: 'Server 2' },
+  { id: 'smsbower', featureKey: 'server1', name: 'Server 1' },
+  { id: 'smscode', featureKey: 'server2', name: 'Server 2' },
 ];
 
 const getFunctionErrorMessage = async (error, fallback) => {
@@ -32,6 +35,7 @@ export default function Order() {
   const [userBalance, setUserBalance] = useState(0);
   const [step, setStep] = useState('select');
   const [selectedProvider, setSelectedProvider] = useState(providers[0]);
+  const [featureSettings, setFeatureSettings] = useState(() => normalizeFeatureSettings());
   const [countries, setCountries] = useState([]);
   const [services, setServices] = useState([]);
   const [searchCountry, setSearchCountry] = useState('');
@@ -47,25 +51,43 @@ export default function Order() {
     let active = true;
 
     const loadInitialData = async () => {
-      const [userResult, catalogResult] = await Promise.all([
+      const [userResult, featuresResult] = await Promise.all([
         supabase.from('users').select('balance').eq('id', userId).single(),
-        supabase.functions.invoke('sms-catalog', {
-          body: { action: 'getCatalog', provider: providers[0].id },
-        }),
+        fetchUserData('features').catch(() => null),
       ]);
 
       if (!active) return;
 
       if (userResult.data) setUserBalance(Number(userResult.data.balance || 0));
+      const nextFeatureSettings = normalizeFeatureSettings(featuresResult?.features);
+      const availableProvider = providers.find(
+        (provider) => nextFeatureSettings[provider.featureKey].is_active,
+      );
+      setFeatureSettings(nextFeatureSettings);
 
-      if (catalogResult.error || !catalogResult.data?.success) {
+      if (!availableProvider) {
+        setSelectedProvider(providers[0]);
+        setCountries([]);
+        setServices([]);
+        setErrorMessage('Semua server sedang maintenance. Silakan coba lagi nanti.');
+        setLoading(false);
+        return;
+      }
+
+      setSelectedProvider(availableProvider);
+      const { data, error } = await supabase.functions.invoke('sms-catalog', {
+        body: { action: 'getCatalog', provider: availableProvider.id },
+      });
+      if (!active) return;
+
+      if (error || !data?.success) {
         setErrorMessage(
-          (catalogResult.data?.error && sanitizePublicError(catalogResult.data.error, 'Katalog layanan gagal dimuat.')) ||
-          await getFunctionErrorMessage(catalogResult.error, 'Katalog layanan gagal dimuat.'),
+          (data?.error && sanitizePublicError(data.error, 'Katalog layanan gagal dimuat.')) ||
+          await getFunctionErrorMessage(error, 'Katalog layanan gagal dimuat.'),
         );
       } else {
-        setCountries(catalogResult.data.countries || []);
-        setServices(catalogResult.data.services || []);
+        setCountries(data.countries || []);
+        setServices(data.services || []);
       }
 
       setLoading(false);
@@ -94,6 +116,7 @@ export default function Order() {
   const visibleServices = showAllServices ? filteredServices : filteredServices.slice(0, 6);
 
   const handleSelectProvider = async (provider) => {
+    if (!featureSettings[provider.featureKey].is_active) return;
     if (loading || provider.id === selectedProvider.id) return;
 
     setSelectedProvider(provider);
@@ -127,6 +150,13 @@ export default function Order() {
 
   const handleContinue = async () => {
     if (!selectedService || loading) return;
+    if (!featureSettings[selectedProvider.featureKey].is_active) {
+      await dialog.alert(featureSettings[selectedProvider.featureKey].maintenance_message, {
+        title: 'Server Maintenance',
+        type: 'error',
+      });
+      return;
+    }
 
     setStep('products');
     setLoading(true);
@@ -187,6 +217,7 @@ export default function Order() {
           countryId: product.countryId,
           serviceName: product.serviceName,
           basePrice: product.basePrice,
+          productId: product.productId,
           catalogProductId: product.catalogProductId,
         },
       });
@@ -230,7 +261,7 @@ export default function Order() {
         )}
 
         {loading ? (
-          <div className="text-center font-black animate-pulse py-10">Mencari stok nomor...</div>
+          <MochiLoader compact message="Mencari stok nomor..." />
         ) : products.length === 0 ? (
           <div className="border-2 border-black p-6 rounded-xl bg-white text-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] font-black mb-8">
             Maaf, stok nomor untuk layanan ini sedang kosong.
@@ -284,15 +315,30 @@ export default function Order() {
               type="button"
               key={provider.id}
               onClick={() => handleSelectProvider(provider)}
-              disabled={loading}
+              disabled={loading || !featureSettings[provider.featureKey].is_active}
               className={`py-3 px-2 text-lg font-black transition-colors disabled:opacity-60 ${
                 index === 0 ? 'border-r-2 border-black' : ''
-              } ${selectedProvider.id === provider.id ? 'bg-mochi-green' : 'bg-white'}`}
+              } ${
+                !featureSettings[provider.featureKey].is_active
+                  ? 'bg-red-200'
+                  : selectedProvider.id === provider.id
+                    ? 'bg-mochi-green'
+                    : 'bg-white'
+              }`}
             >
-              {provider.name}
+              <span className="block">{provider.name}</span>
+              <span className="block text-[9px] uppercase">
+                {featureSettings[provider.featureKey].is_active ? 'Aktif' : 'Maintenance'}
+              </span>
             </button>
           ))}
         </div>
+        {providers.filter((provider) => !featureSettings[provider.featureKey].is_active).map((provider) => (
+          <div key={`${provider.id}-maintenance`} className="mt-3 border-2 border-black rounded-xl bg-red-200 p-3 shadow-neo">
+            <p className="text-xs font-black">{provider.name} Maintenance</p>
+            <p className="mt-1 text-[11px] font-bold">{featureSettings[provider.featureKey].maintenance_message}</p>
+          </div>
+        ))}
       </div>
 
       <div className="mb-6">
@@ -362,7 +408,7 @@ export default function Order() {
       )}
 
       {loading ? (
-        <div className="text-center font-black animate-pulse py-10">Memuat layanan...</div>
+        <MochiLoader compact message="Memuat layanan..." />
       ) : filteredServices.length === 0 ? (
         <div className="border-2 border-black rounded-xl bg-white p-6 text-center font-black shadow-neo mb-6">
           Layanan tidak ditemukan.
@@ -400,7 +446,7 @@ export default function Order() {
       <div className="fixed left-0 right-0 bottom-[90px] z-40 bg-mochi-bg p-1">
         <MochiButton
           onClick={handleContinue}
-          disabled={!selectedService || loading}
+          disabled={!selectedService || loading || !featureSettings[selectedProvider.featureKey].is_active}
           className="disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Lanjutkan

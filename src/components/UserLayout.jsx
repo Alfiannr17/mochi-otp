@@ -1,13 +1,17 @@
 import { useEffect, useRef } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { HomeIcon, HistoryIcon, OrderIcon, UserIcon, WalletIcon } from './Icons';
 import { useTelegramAuth } from '../hooks/useTelegramAuth';
 import { MochiDialogProvider } from './MochiDialog';
 import { fetchUserData } from '../lib/userData';
+import MochiLoader from './MochiLoader';
+import { primeOtpNotificationSound, syncOtpNotifications } from '../lib/otpNotification';
 
 export default function UserLayout() {
   const { errorMessage, loading } = useTelegramAuth();
-  const syncInFlight = useRef(false);
+  const location = useLocation();
+  const orderSyncInFlight = useRef(false);
+  const depositSyncInFlight = useRef(false);
   const navItems = [
     { label: 'Home', path: '/home', icon: HomeIcon },
     { label: 'Order', path: '/order', icon: OrderIcon },
@@ -19,42 +23,60 @@ export default function UserLayout() {
   useEffect(() => {
     if (loading || errorMessage) return undefined;
 
-    const syncLifecycle = () => {
-      if (syncInFlight.current) return;
-      syncInFlight.current = true;
-      Promise.allSettled([
-        fetchUserData('orders'),
-        fetchUserData('deposits'),
-      ]).then((results) => {
-        results.forEach((result) => {
-          if (result.status === 'rejected') {
-            console.error('Gagal menyinkronkan lifecycle:', result.reason);
-          }
-        });
-      }).finally(() => {
-        syncInFlight.current = false;
-      });
+    const unlockAudio = () => {
+      primeOtpNotificationSound();
     };
-    const initialSync = window.setTimeout(syncLifecycle, 0);
-    const interval = window.setInterval(syncLifecycle, 30000);
+    document.addEventListener('pointerdown', unlockAudio, { once: true });
+    document.addEventListener('touchstart', unlockAudio, { once: true });
+
+    const syncOrders = () => {
+      if (location.pathname.startsWith('/orders/') || orderSyncInFlight.current) return;
+      orderSyncInFlight.current = true;
+      fetchUserData('orders')
+        .then((result) => syncOtpNotifications(result.orders || []))
+        .catch((error) => console.error('Gagal menyinkronkan order:', error))
+        .finally(() => {
+          orderSyncInFlight.current = false;
+        });
+    };
+
+    const syncDeposits = () => {
+      if (depositSyncInFlight.current) return;
+      depositSyncInFlight.current = true;
+      fetchUserData('deposits')
+        .catch((error) => console.error('Gagal menyinkronkan deposit:', error))
+        .finally(() => {
+          depositSyncInFlight.current = false;
+        });
+    };
+
+    const initialOrderSync = window.setTimeout(syncOrders, 0);
+    const initialDepositSync = window.setTimeout(syncDeposits, 0);
+    const orderInterval = window.setInterval(syncOrders, 7000);
+    const depositInterval = window.setInterval(syncDeposits, 30000);
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible') syncLifecycle();
+      if (document.visibilityState === 'visible') {
+        syncOrders();
+        syncDeposits();
+      }
     };
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
-      window.clearTimeout(initialSync);
-      window.clearInterval(interval);
+      window.clearTimeout(initialOrderSync);
+      window.clearTimeout(initialDepositSync);
+      window.clearInterval(orderInterval);
+      window.clearInterval(depositInterval);
       document.removeEventListener('visibilitychange', handleVisibility);
+      document.removeEventListener('pointerdown', unlockAudio);
+      document.removeEventListener('touchstart', unlockAudio);
     };
-  }, [errorMessage, loading]);
+  }, [errorMessage, loading, location.pathname]);
 
   if (loading) {
     return (
-      <div className="bg-mochi-bg min-h-screen p-6 flex items-center justify-center font-mono text-black">
-        <div className="border-2 border-black rounded-xl bg-white p-6 text-center font-black shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
-          Menghubungkan akun Telegram...
-        </div>
+      <div className="bg-mochi-bg min-h-screen font-mono text-black">
+        <MochiLoader fullScreen message="Menghubungkan akun Telegram..." />
       </div>
     );
   }

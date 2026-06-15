@@ -2,6 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchUserData } from '../lib/userData';
 import { parseOtpState } from '../lib/otpHistory';
+import MochiLoader from '../components/MochiLoader';
+import { HistoryFilter, HistoryPagination } from '../components/HistoryControls';
+
+const PAGE_SIZE = 10;
+const ORDER_FILTERS = [
+  { value: 'all', label: 'Semua Status' },
+  { value: 'active', label: 'Aktif' },
+  { value: 'completed', label: 'Selesai' },
+  { value: 'canceled', label: 'Dibatalkan' },
+];
 
 const getStatusBadge = (status) => {
   if (status === 'active') return 'bg-yellow-300';
@@ -41,12 +51,21 @@ function OrderCard({ order, onOpen }) {
         <div className="pt-1">
           <span className="block text-gray-600 mb-2">Kode SMS:</span>
           {otpState.codes.length > 0 ? (
-            <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-2">
               {otpState.codes.map((code, index) => (
-                <span key={`${code}-${index}`} className="border-2 border-black rounded-lg bg-mochi-green p-2 text-center">
+                <div
+                  key={`${code}-${index}`}
+                  className="w-full border-2 border-black rounded-lg bg-mochi-green p-2 text-center overflow-hidden"
+                >
                   <span className="block text-[8px] font-black">OTP {index + 1}</span>
                   <span className="block font-black text-sm text-purple-700">{code}</span>
-                </span>
+                  {otpState.messages[index] && (
+                    <span className="block mt-2 border-t-2 border-black pt-2 text-left text-[9px] font-bold break-words">
+                      <span className="block font-black uppercase text-gray-600 mb-1">Pesan SMS</span>
+                      {otpState.messages[index]}
+                    </span>
+                  )}
+                </div>
               ))}
             </div>
           ) : (
@@ -78,6 +97,8 @@ export default function HistoryOrder() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [page, setPage] = useState(1);
   const fetchInFlight = useRef(false);
 
   const fetchOrderHistory = useCallback(async () => {
@@ -110,17 +131,39 @@ export default function HistoryOrder() {
     };
   }, [fetchOrderHistory]);
 
-  const activeOrders = useMemo(() => orders.filter((order) => order.status === 'active'), [orders]);
-  const previousOrders = useMemo(() => orders.filter((order) => order.status !== 'active'), [orders]);
+  const filteredOrders = useMemo(
+    () => orders.filter((order) => statusFilter === 'all' || order.status === statusFilter),
+    [orders, statusFilter],
+  );
+  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / PAGE_SIZE));
+  const effectivePage = Math.min(page, totalPages);
+  const visibleOrders = useMemo(
+    () => filteredOrders.slice((effectivePage - 1) * PAGE_SIZE, effectivePage * PAGE_SIZE),
+    [effectivePage, filteredOrders],
+  );
   const openOrder = (order) => navigate(`/orders/${order.id}`, { state: { order } });
+
+  const handleFilterChange = (value) => {
+    setStatusFilter(value);
+    setPage(1);
+  };
 
   return (
     <div className="pb-8">
       <h1 className="text-2xl font-black mb-1">Riwayat Order</h1>
       <p className="text-xs mb-6">Buka kembali order aktif dan pantau kode OTP kamu.</p>
 
+      {!loading && !errorMessage && orders.length > 0 && (
+        <HistoryFilter
+          value={statusFilter}
+          onChange={handleFilterChange}
+          options={ORDER_FILTERS}
+          resultCount={filteredOrders.length}
+        />
+      )}
+
       {loading ? (
-        <p className="text-center font-bold">Memuat data...</p>
+        <MochiLoader message="Memuat riwayat order..." />
       ) : errorMessage ? (
         <div className="border-2 border-black rounded-xl bg-red-300 p-5 text-center shadow-neo">
           <p className="font-black mb-3">Riwayat order gagal dimuat.</p>
@@ -139,21 +182,19 @@ export default function HistoryOrder() {
         </div>
       ) : (
         <>
-          <h2 className="font-black mb-3">Order Aktif ({activeOrders.length})</h2>
-          {activeOrders.length > 0 ? (
-            <div className="space-y-4 mb-8">
-              {activeOrders.map((order) => <OrderCard key={order.id} order={order} onOpen={openOrder} />)}
+          <h2 className="font-black mb-3">Daftar Order ({filteredOrders.length})</h2>
+          {visibleOrders.length > 0 ? (
+            <div className="space-y-4">
+              {visibleOrders.map((order) => (
+                <OrderCard key={order.id} order={order} onOpen={openOrder} />
+              ))}
             </div>
           ) : (
-            <div className="border-2 border-black rounded-xl bg-white p-4 text-center font-bold text-sm shadow-neo mb-8">
-              Tidak ada order aktif.
+            <div className="border-2 border-black rounded-xl bg-white p-4 text-center font-bold text-sm shadow-neo">
+              Tidak ada order dengan status ini.
             </div>
           )}
-
-          <h2 className="font-black mb-3">Order Sebelumnya</h2>
-          <div className="space-y-4">
-            {previousOrders.map((order) => <OrderCard key={order.id} order={order} onOpen={openOrder} />)}
-          </div>
+          <HistoryPagination page={effectivePage} totalPages={totalPages} onPageChange={setPage} />
         </>
       )}
     </div>

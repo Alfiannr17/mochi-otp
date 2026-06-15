@@ -15,6 +15,7 @@ import {
   getSmsCodeProducts,
 } from "../_shared/smscode.ts"
 import { getPublicProviderError } from "../_shared/public-error.ts"
+import { getFeatureSetting, getProviderFeatureKey } from "../_shared/feature-settings.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -39,6 +40,7 @@ serve(async (req) => {
       countryId,
       serviceName,
       basePrice,
+      productId,
       catalogProductId,
     } = await req.json()
     const requestedBasePrice = Number(basePrice)
@@ -55,7 +57,7 @@ serve(async (req) => {
     if (provider === 'smsbower' && !Number.isFinite(requestedBasePrice)) {
       return jsonResponse({ error: 'Pilihan harga Server tidak valid. Silakan pilih ulang.' }, 400)
     }
-    if (provider === 'smscode' && (!serviceId || !catalogProductId)) {
+    if (provider === 'smscode' && (!serviceId || !productId || !catalogProductId)) {
       return jsonResponse({ error: 'Pilihan layanan Server tidak valid. Silakan pilih ulang.' }, 400)
     }
     if (!['smsbower', 'smscode'].includes(provider)) {
@@ -66,6 +68,13 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     )
+    const feature = await getFeatureSetting(supabase, getProviderFeatureKey(provider))
+    if (!feature.is_active) {
+      return jsonResponse({
+        error: feature.maintenance_message,
+        maintenance: true,
+      }, 503)
+    }
 
     let price = 0
     let activationId = ''
@@ -79,6 +88,7 @@ serve(async (req) => {
       const products = await getSmsCodeProducts(serviceId, countryId)
       smsCodeProduct = products.find(
         (product: any) =>
+          String(product.id) === String(productId) &&
           String(product.catalog_product_id) === String(catalogProductId) &&
           String(product.platform_id) === String(serviceId) &&
           String(product.country_id) === String(countryId) &&
@@ -86,11 +96,21 @@ serve(async (req) => {
           Number(product.available) > 0,
       )
 
-      if (!smsCodeProduct) return jsonResponse({ error: 'Stok nomor di Server sedang kosong.' }, 400)
+      if (!smsCodeProduct) {
+        return jsonResponse({
+          error: 'Pilihan harga di Server sudah berubah atau stoknya habis. Silakan pilih ulang.',
+        }, 409)
+      }
 
       const basePriceIdr = Number(smsCodeProduct.price?.canonical_amount)
       if (!Number.isFinite(basePriceIdr)) {
         return jsonResponse({ error: 'Harga dari Server tidak valid. Silakan pilih ulang.' }, 400)
+      }
+      if (
+        Number.isFinite(requestedBasePrice) &&
+        Math.abs(Number(smsCodeProduct.price?.amount) - requestedBasePrice) > 1e-9
+      ) {
+        return jsonResponse({ error: 'Harga di Server berubah. Silakan pilih ulang layanan.' }, 409)
       }
       price = calculateIdrMochiPrice(serviceCode, basePriceIdr)
     } else {
@@ -123,11 +143,14 @@ serve(async (req) => {
 
     if (provider === 'smscode') {
       const smsCodeOrder = await createSmsCodeOrder(
-        smsCodeProduct.catalog_product_id,
-        String(smsCodeProduct.price?.amount),
+        smsCodeProduct.id,
         `mochi_${userId}_${crypto.randomUUID().replaceAll('-', '')}`,
       )
-      const actualBasePriceIdr = Number(smsCodeOrder.amount?.canonical_amount)
+      const actualBasePriceIdr = Number(
+        smsCodeOrder.amount?.canonical_amount ??
+        smsCodeOrder.amount?.canonicalAmount ??
+        smsCodeProduct.price?.canonical_amount,
+      )
       const actualPrice = calculateIdrMochiPrice(serviceCode, actualBasePriceIdr)
 
       if (!Number.isFinite(actualBasePriceIdr) || actualPrice > price) {
@@ -137,7 +160,11 @@ serve(async (req) => {
 
       price = actualPrice
       activationId = encodeSmsCodeActivationId(smsCodeOrder.id)
-      phoneNumber = String(smsCodeOrder.phone_number)
+      phoneNumber = String(smsCodeOrder.phone_number ?? '')
+      if (!phoneNumber) {
+        await cancelSmsCodeOrder(smsCodeOrder.id).catch(() => null)
+        return jsonResponse({ error: 'Server tidak mengembalikan nomor telepon. Silakan coba lagi.' }, 502)
+      }
       cancelRemoteOrder = async () => {
         const canceledOrder = await cancelSmsCodeOrder(smsCodeOrder.id)
         if (String(canceledOrder?.status).toUpperCase() !== 'CANCELED') {

@@ -6,6 +6,31 @@ const getApiToken = () => {
   return token
 }
 
+const findProviderErrorMessage = (payload: any, fallback: string) => {
+  const codeCandidates = [
+    payload?.error?.code,
+    payload?.errors?.[0]?.code,
+  ]
+  const messageCandidates = [
+    payload?.error?.message,
+    payload?.message,
+    payload?.error,
+    payload?.errors?.[0]?.message,
+  ]
+
+  const code = codeCandidates.find((candidate) =>
+    ['string', 'number'].includes(typeof candidate) && String(candidate).trim()
+  )
+  const message = messageCandidates.find((candidate) =>
+    ['string', 'number'].includes(typeof candidate) && String(candidate).trim()
+  )
+
+  if (code && message && String(code).trim() !== String(message).trim()) {
+    return `${String(code).trim()}: ${String(message).trim()}`
+  }
+  return code ? String(code).trim() : message ? String(message).trim() : fallback
+}
+
 const parseResponse = async (response: Response) => {
   const text = await response.text()
   let payload
@@ -17,15 +42,45 @@ const parseResponse = async (response: Response) => {
   }
 
   if (!response.ok || payload?.success === false) {
-    throw new Error(
-      payload?.error?.message ??
-      payload?.message ??
-      payload?.error?.code ??
-      `SMSCode HTTP ${response.status}`,
-    )
+    throw new Error(findProviderErrorMessage(payload, `Server HTTP ${response.status}`))
   }
 
   return payload
+}
+
+const unwrapSmsCodeOrder = (payload: any, expectedOrderId?: string | number) => {
+  const candidates = [
+    ...(Array.isArray(payload) ? payload : []),
+    ...(Array.isArray(payload?.data?.orders) ? payload.data.orders : []),
+    ...(Array.isArray(payload?.data) ? payload.data : []),
+    ...(Array.isArray(payload?.orders) ? payload.orders : []),
+    payload?.data?.order,
+    payload?.order,
+    payload?.data,
+  ].filter((candidate) => candidate && typeof candidate === 'object' && !Array.isArray(candidate))
+
+  if (expectedOrderId !== undefined) {
+    const matched = candidates.find((order: any) =>
+      String(order?.id ?? order?.order_id) === String(expectedOrderId)
+    )
+    if (matched) return matched
+  }
+
+  return candidates[0] ?? null
+}
+
+export const normalizeSmsCodeOrder = (order: any) => {
+  if (!order) return null
+  const id = order.id ?? order.order_id
+  const phoneNumber = order.phone_number ?? order.number ?? order.msisdn ?? order.phone
+  const price = order.amount ?? order.price ?? order.cost ?? null
+
+  return {
+    ...order,
+    id,
+    phone_number: phoneNumber,
+    amount: price,
+  }
 }
 
 export const fetchSmsCode = async (
@@ -109,29 +164,35 @@ export const getSmsCodeProducts = async (
 }
 
 export const createSmsCodeOrder = async (
-  catalogProductId: string | number,
-  maxPrice: string,
+  productId: string | number,
   idempotencyKey: string,
 ) => {
   const payload = await fetchSmsCode('/orders/create', {
     method: 'POST',
     idempotencyKey,
     body: {
-      catalog_product_id: Number(catalogProductId),
-      max_price: maxPrice,
-      policy: 'cheapest',
+      product_id: Number(productId),
       quantity: 1,
     },
   })
 
-  const order = payload?.data?.orders?.[0]
-  if (!order) throw new Error('SMSCode tidak mengembalikan nomor')
+  const order = normalizeSmsCodeOrder(unwrapSmsCodeOrder(payload))
+  if (!order?.id) throw new Error('Server tidak mengembalikan ID order')
+  if (!order?.phone_number) throw new Error('Server tidak mengembalikan nomor telepon')
   return order
 }
 
 export const getSmsCodeOrder = async (orderId: string | number) => {
-  const payload = await fetchSmsCode(`/orders/${encodeURIComponent(String(orderId))}`)
-  return payload?.data
+  try {
+    const activePayload = await fetchSmsCode('/orders/active')
+    const activeOrder = normalizeSmsCodeOrder(unwrapSmsCodeOrder(activePayload, orderId))
+    if (activeOrder) return activeOrder
+  } catch (error) {
+    console.error(`Gagal mengambil daftar order aktif Server untuk ${orderId}:`, error)
+  }
+
+  const detailPayload = await fetchSmsCode(`/orders/${encodeURIComponent(String(orderId))}`)
+  return normalizeSmsCodeOrder(unwrapSmsCodeOrder(detailPayload, orderId))
 }
 
 export const cancelSmsCodeOrder = async (orderId: string | number) => {
@@ -139,7 +200,7 @@ export const cancelSmsCodeOrder = async (orderId: string | number) => {
     method: 'POST',
     body: { id: Number(orderId) },
   })
-  return payload?.data
+  return normalizeSmsCodeOrder(unwrapSmsCodeOrder(payload, orderId)) ?? payload?.data
 }
 
 export const resendSmsCodeOrder = async (orderId: string | number) => {
@@ -147,7 +208,7 @@ export const resendSmsCodeOrder = async (orderId: string | number) => {
     method: 'POST',
     body: { id: Number(orderId) },
   })
-  return payload?.data
+  return normalizeSmsCodeOrder(unwrapSmsCodeOrder(payload, orderId)) ?? payload?.data
 }
 
 export const finishSmsCodeOrder = async (orderId: string | number) => {
@@ -155,7 +216,7 @@ export const finishSmsCodeOrder = async (orderId: string | number) => {
     method: 'POST',
     body: { id: Number(orderId) },
   })
-  return payload?.data
+  return normalizeSmsCodeOrder(unwrapSmsCodeOrder(payload, orderId)) ?? payload?.data
 }
 
 export const encodeSmsCodeActivationId = (orderId: string | number) => `smscode:${orderId}`

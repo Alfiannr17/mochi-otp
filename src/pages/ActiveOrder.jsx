@@ -8,13 +8,29 @@ import { supabase } from '../lib/supabase';
 import { fetchUserData } from '../lib/userData';
 import { sanitizePublicError } from '../lib/publicError';
 import { parseOtpState } from '../lib/otpHistory';
+import MochiLoader from '../components/MochiLoader';
+import { markOtpCodesSeen, notifyNewOtpCodes } from '../lib/otpNotification';
 
 const ORDER_LIFETIME_MS = 25 * 60 * 1000;
+const SERVER2_CANCEL_DELAY_MS = 2 * 60 * 1000;
 
 const getTimeLeft = (order) => {
   const createdAt = new Date(order?.created_at).getTime();
   if (!Number.isFinite(createdAt)) return 0;
   return Math.max(0, Math.ceil((createdAt + ORDER_LIFETIME_MS - Date.now()) / 1000));
+};
+
+const getCancelWaitLeft = (order) => {
+  if (!String(order?.activation_id || '').startsWith('smscode:')) return 0;
+  const createdAt = new Date(order?.created_at).getTime();
+  if (!Number.isFinite(createdAt)) return 0;
+  return Math.max(0, Math.ceil((createdAt + SERVER2_CANCEL_DELAY_MS - Date.now()) / 1000));
+};
+
+const formatTime = (seconds) => {
+  const minutes = Math.floor(seconds / 60).toString().padStart(2, '0');
+  const remainingSeconds = (seconds % 60).toString().padStart(2, '0');
+  return `${minutes}:${remainingSeconds}`;
 };
 
 const getFunctionErrorMessage = async (error, fallback) => {
@@ -34,7 +50,13 @@ export default function ActiveOrder() {
   const [order, setOrder] = useState(location.state?.order || null);
   const [loading, setLoading] = useState(!location.state?.order);
   const [timeLeft, setTimeLeft] = useState(() => getTimeLeft(location.state?.order));
+  const [cancelWaitLeft, setCancelWaitLeft] = useState(
+    () => getCancelWaitLeft(location.state?.order),
+  );
   const [otpCodes, setOtpCodes] = useState(() => parseOtpState(location.state?.order?.sms_code).codes);
+  const [otpMessages, setOtpMessages] = useState(
+    () => parseOtpState(location.state?.order?.sms_code).messages,
+  );
   const [waitingForOtp, setWaitingForOtp] = useState(
     () => parseOtpState(location.state?.order?.sms_code).waiting,
   );
@@ -48,6 +70,15 @@ export default function ActiveOrder() {
   const expiryRequested = useRef(false);
   const pollInFlight = useRef(false);
   const hasReceivedOtp = otpCodes.length > 0;
+  const isServer2 = String(order?.activation_id || '').startsWith('smscode:');
+  const hasMissingServer2Message = isServer2 &&
+    otpCodes.some((_, index) => !otpMessages[index]);
+  const refundLocked = cancelWaitLeft > 0;
+
+  useEffect(() => {
+    if (!order?.id) return;
+    markOtpCodesSeen(order.id, parseOtpState(order.sms_code).codes);
+  }, [order?.id, order?.sms_code]);
 
   useEffect(() => {
     if (order || !orderId) return;
@@ -60,8 +91,10 @@ export default function ActiveOrder() {
 
         setOrder(data.order);
         setTimeLeft(getTimeLeft(data.order));
+        setCancelWaitLeft(getCancelWaitLeft(data.order));
         const otpState = parseOtpState(data.order.sms_code);
         setOtpCodes(otpState.codes);
+        setOtpMessages(otpState.messages);
         setWaitingForOtp(otpState.waiting);
         setIsCanceled(data.order.status === 'canceled');
         setIsCompleted(data.order.status === 'completed');
@@ -83,7 +116,7 @@ export default function ActiveOrder() {
     if (
       pollInFlight.current ||
       !order ||
-      (!waitingForOtp && hasReceivedOtp) ||
+      (!waitingForOtp && hasReceivedOtp && !hasMissingServer2Message) ||
       isCanceled ||
       isCompleted
     ) return;
@@ -101,14 +134,22 @@ export default function ActiveOrder() {
       if (data?.error) throw new Error(sanitizePublicError(data.error, 'Gagal memeriksa SMS.'));
 
       if (data.status === 'success') {
-        setOtpCodes(data.codes || [...otpCodes, data.code].filter(Boolean));
+        const nextOtpCodes = data.codes || [...otpCodes, data.code].filter(Boolean);
+        const nextOtpMessages = data.messages || otpMessages;
+        const hasNewOtp = await notifyNewOtpCodes(order.id, nextOtpCodes);
+        setOtpCodes(nextOtpCodes);
+        setOtpMessages(nextOtpMessages);
         setWaitingForOtp(false);
         setPollMessage('');
-        WebApp.HapticFeedback?.notificationOccurred('success');
+        if (hasNewOtp) WebApp.HapticFeedback?.notificationOccurred('success');
       } else if (data.status === 'completed') {
+        setOtpCodes(data.codes || otpCodes);
+        setOtpMessages(data.messages || otpMessages);
         setIsCompleted(true);
         setPollMessage('');
       } else if (data.status === 'canceled') {
+        setOtpCodes(data.codes || otpCodes);
+        setOtpMessages(data.messages || otpMessages);
         setIsCanceled(true);
         setPollMessage('');
         dialog.alert(data.refunded === false
@@ -119,14 +160,28 @@ export default function ActiveOrder() {
           title: 'Order Dibatalkan',
           type: 'error',
         });
-      } else setPollMessage('');
+      } else {
+        setOtpCodes(data.codes || otpCodes);
+        setOtpMessages(data.messages || otpMessages);
+        setPollMessage('');
+      }
     } catch (error) {
       console.error('Gagal cek SMS:', error);
       setPollMessage('Koneksi ke Server terganggu. Sistem tetap mencoba otomatis...');
     } finally {
       pollInFlight.current = false;
     }
-  }, [dialog, hasReceivedOtp, isCanceled, isCompleted, order, otpCodes, waitingForOtp]);
+  }, [
+    dialog,
+    hasMissingServer2Message,
+    hasReceivedOtp,
+    isCanceled,
+    isCompleted,
+    order,
+    otpCodes,
+    otpMessages,
+    waitingForOtp,
+  ]);
 
   const handleCancelOrder = useCallback(async () => {
     if (!order || isCanceling || isCanceled || hasReceivedOtp) return;
@@ -208,12 +263,20 @@ export default function ActiveOrder() {
   }, [dialog, runOrderAction]);
 
   const handleRefundOrder = useCallback(async () => {
+    if (refundLocked) {
+      await dialog.alert(
+        `Refund Server 2 baru tersedia setelah 2 menit. Tunggu ${formatTime(cancelWaitLeft)} lagi.`,
+        { title: 'Refund Belum Tersedia', type: 'error' },
+      );
+      return;
+    }
+
     const agreed = await dialog.confirm(
       'Batalkan order dan kembalikan saldo? Refund tidak tersedia setelah OTP diterima.',
       { title: 'Konfirmasi Refund', confirmText: 'Refund' },
     );
     if (agreed) handleCancelOrder();
-  }, [dialog, handleCancelOrder]);
+  }, [cancelWaitLeft, dialog, handleCancelOrder, refundLocked]);
 
   const handleResendOtp = useCallback(async () => {
     const agreed = await dialog.confirm('Minta kode OTP baru ke nomor ini?', {
@@ -224,7 +287,12 @@ export default function ActiveOrder() {
   }, [dialog, runOrderAction]);
 
   useEffect(() => {
-    if (!order || (!waitingForOtp && hasReceivedOtp) || isCanceled || isCompleted) return undefined;
+    if (
+      !order ||
+      (!waitingForOtp && hasReceivedOtp && !hasMissingServer2Message) ||
+      isCanceled ||
+      isCompleted
+    ) return undefined;
     const initialPoll = window.setTimeout(checkSmsStatus, 0);
     const pollInterval = window.setInterval(checkSmsStatus, 5000);
     const handleVisibility = () => {
@@ -236,13 +304,22 @@ export default function ActiveOrder() {
       window.clearInterval(pollInterval);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [checkSmsStatus, hasReceivedOtp, isCanceled, isCompleted, order, waitingForOtp]);
+  }, [
+    checkSmsStatus,
+    hasMissingServer2Message,
+    hasReceivedOtp,
+    isCanceled,
+    isCompleted,
+    order,
+    waitingForOtp,
+  ]);
 
   useEffect(() => {
     if (!order || isCanceled || isCompleted) return undefined;
     const updateTimeLeft = () => {
       const nextTimeLeft = getTimeLeft(order);
       setTimeLeft(nextTimeLeft);
+      setCancelWaitLeft(getCancelWaitLeft(order));
 
       if (nextTimeLeft > 0) expiryRequested.current = false;
       if (nextTimeLeft === 0 && !expiryRequested.current) {
@@ -251,7 +328,9 @@ export default function ActiveOrder() {
           .then((data) => {
             setOrder(data.order);
             const otpState = parseOtpState(data.order.sms_code);
+            notifyNewOtpCodes(data.order.id, otpState.codes);
             setOtpCodes(otpState.codes);
+            setOtpMessages(otpState.messages);
             setWaitingForOtp(otpState.waiting);
             setIsCanceled(data.order.status === 'canceled');
             setIsCompleted(data.order.status === 'completed');
@@ -270,13 +349,7 @@ export default function ActiveOrder() {
     await dialog.alert('Nomor berhasil disalin ke clipboard!', { title: 'Berhasil Disalin' });
   };
 
-  const formatTime = (seconds) => {
-    const minutes = Math.floor(seconds / 60).toString().padStart(2, '0');
-    const remainingSeconds = (seconds % 60).toString().padStart(2, '0');
-    return `${minutes}:${remainingSeconds}`;
-  };
-
-  if (loading) return <div className="py-16 text-center font-black animate-pulse">Memuat order...</div>;
+  if (loading) return <MochiLoader message="Memuat order..." />;
   if (loadError) {
     return (
       <div className="border-2 border-black rounded-xl bg-red-300 p-6 text-center shadow-neo">
@@ -334,6 +407,12 @@ export default function ActiveOrder() {
                 >
                   <span className="block text-[10px] font-black text-left mb-1">OTP {index + 1}</span>
                   <span className="block text-3xl font-black tracking-widest">{code}</span>
+                  {otpMessages[index] && (
+                    <span className="block mt-3 border-t-2 border-black pt-3 text-left text-xs font-bold normal-case tracking-normal break-words">
+                      <span className="block text-[9px] font-black uppercase text-gray-600 mb-1">Pesan SMS</span>
+                      {otpMessages[index]}
+                    </span>
+                  )}
                 </button>
               ))}
               {waitingForOtp && (
@@ -390,10 +469,14 @@ export default function ActiveOrder() {
             <button
               type="button"
               onClick={handleFinishOrder}
-              disabled={isFinishing || isResending}
+              disabled={isFinishing || isResending || (isServer2 && waitingForOtp)}
               className="bg-mochi-green border-2 border-black rounded-xl py-3 px-2 font-black text-sm shadow-neo active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all disabled:opacity-60"
             >
-              {isFinishing ? 'MEMPROSES...' : 'SELESAI'}
+              {isFinishing
+                ? 'MEMPROSES...'
+                : isServer2 && waitingForOtp
+                  ? 'TUNGGU OTP BARU'
+                  : 'SELESAI'}
             </button>
           </div>
         ) : (
@@ -401,10 +484,14 @@ export default function ActiveOrder() {
             <button
               type="button"
               onClick={handleRefundOrder}
-              disabled={isCanceling || isFinishing}
+              disabled={isCanceling || isFinishing || refundLocked}
               className="w-full bg-red-400 border-2 border-black rounded-xl py-3 px-2 font-black text-sm shadow-neo active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all disabled:opacity-60"
             >
-              {isCanceling ? 'MEMPROSES...' : 'REFUND'}
+              {isCanceling
+                ? 'MEMPROSES...'
+                : refundLocked
+                  ? `REFUND (${formatTime(cancelWaitLeft)})`
+                  : 'REFUND'}
             </button>
           </div>
         )

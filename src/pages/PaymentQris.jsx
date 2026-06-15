@@ -7,6 +7,7 @@ import { ArrowLeftIcon } from '../components/Icons';
 import { useMochiDialog } from '../hooks/useMochiDialog';
 import { supabase } from '../lib/supabase';
 import { sanitizePublicError } from '../lib/publicError';
+import MochiLoader from '../components/MochiLoader';
 
 const DEPOSIT_LIFETIME_MS = 30 * 60 * 1000;
 
@@ -158,7 +159,7 @@ export default function PaymentQris() {
   }, [checkPaymentStatus, invoice?.orderId]);
 
   if (loading) {
-    return <div className="py-16 text-center font-black animate-pulse">Membuat QRIS pembayaran...</div>;
+    return <MochiLoader message="Membuat QRIS pembayaran..." />;
   }
 
   if (errorMessage || !invoice) {

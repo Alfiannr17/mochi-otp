@@ -5,6 +5,7 @@ import { DEPOSIT_LIFETIME_MS } from "../_shared/deposit-lifecycle.ts"
 import { getPublicProviderError } from "../_shared/public-error.ts"
 import { encodeDepositMeta } from "../_shared/deposit-meta.ts"
 import { getBestDepositPromo } from "../_shared/promo.ts"
+import { getFeatureSetting } from "../_shared/feature-settings.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -32,6 +33,13 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     )
+    const depositFeature = await getFeatureSetting(supabase, 'deposit')
+    if (!depositFeature.is_active) {
+      return jsonResponse({
+        error: depositFeature.maintenance_message,
+        maintenance: true,
+      }, 503)
+    }
 
     const { data: user, error: userError } = await supabase
       .from('users')

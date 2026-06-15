@@ -3,6 +3,7 @@ import { adminApi } from '../../lib/adminApi';
 import MochiButton from '../../components/MochiButton';
 import { GiftIcon } from '../../components/Icons';
 import AdminFilterBar from '../../components/admin/AdminFilterBar';
+import MochiLoader from '../../components/MochiLoader';
 
 const EMPTY_PROMO = {
   promo_name: '',
@@ -28,6 +29,7 @@ export default function AdminVouchers() {
   const [promoStatusFilter, setPromoStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [loading, setLoading] = useState(true);
 
   const applyData = useCallback((result) => {
     setVouchers(result.vouchers || []);
@@ -46,6 +48,8 @@ export default function AdminVouchers() {
         if (active) applyData(result);
       } catch (error) {
         if (active) setErrorMessage(error.message);
+      } finally {
+        if (active) setLoading(false);
       }
     };
 
@@ -189,6 +193,8 @@ export default function AdminVouchers() {
       return matchesSearch && matchesStatus;
     });
   }, [search, statusFilter, vouchers]);
+
+  if (loading) return <MochiLoader message="Memuat voucher dan promo..." />;
 
   return (
     <div className="space-y-8 pb-8">

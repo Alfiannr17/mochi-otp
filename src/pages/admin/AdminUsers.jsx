@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import { adminApi } from '../../lib/adminApi';
 import AdminFilterBar from '../../components/admin/AdminFilterBar';
+import MochiLoader from '../../components/MochiLoader';
 
 export default function AdminUsers() {
   const [users, setUsers] = useState([]);
@@ -120,7 +121,7 @@ export default function AdminUsers() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan="6" className="p-8 text-center font-bold">Memuat data...</td></tr>
+              <tr><td colSpan="6"><MochiLoader compact message="Memuat data user..." /></td></tr>
             ) : filteredUsers.length === 0 ? (
               <tr><td colSpan="6" className="p-8 text-center font-bold">User tidak ditemukan.</td></tr>
             ) : filteredUsers.map((u) => (

@@ -55,6 +55,90 @@ body {
   animation: mochi-sparkle 1.2s 0.5s ease-in-out infinite alternate;
 }
 
+.mochi-loader {
+  width: 100%;
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  background: transparent;
+}
+
+.mochi-loader-fullscreen {
+  min-height: 100vh;
+}
+
+.mochi-loader-compact {
+  min-height: 120px;
+  padding: 20px 12px;
+}
+
+.mochi-loader-content {
+  width: min(230px, 76vw);
+  text-align: center;
+}
+
+.mochi-loader-title {
+  margin: 0 0 4px;
+  font-family: monospace;
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: 1px;
+}
+
+.mochi-loader-track {
+  height: 38px;
+  padding: 5px;
+  border: 5px solid #000;
+  border-radius: 11px;
+  background: transparent;
+  overflow: hidden;
+}
+
+.mochi-loader-progress {
+  width: 100%;
+  height: 100%;
+  background: repeating-linear-gradient(
+    90deg,
+    #000 0,
+    #000 31px,
+    transparent 31px,
+    transparent 37px
+  );
+  transform-origin: left center;
+  animation: mochi-loader-progress 1.45s steps(6, end) infinite;
+}
+
+.mochi-loader-message {
+  margin: 12px 0 0;
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 800;
+}
+
+.mochi-loader-compact .mochi-loader-content {
+  width: min(180px, 70vw);
+}
+
+.mochi-loader-compact .mochi-loader-title {
+  font-size: 21px;
+}
+
+.mochi-loader-compact .mochi-loader-track {
+  height: 28px;
+  padding: 4px;
+  border-width: 4px;
+  border-radius: 9px;
+}
+
+.mochi-loader-compact .mochi-loader-message {
+  margin-top: 8px;
+  font-size: 9px;
+}
+
 @keyframes mochi-bot-float {
   0%, 100% { transform: translateY(1px) rotate(-1deg); }
   50% { transform: translateY(-6px) rotate(1deg); }
@@ -74,12 +158,19 @@ body {
   to { transform: scale(1.15) rotate(20deg); opacity: 1; }
 }
 
+@keyframes mochi-loader-progress {
+  0% { clip-path: inset(0 84% 0 0); }
+  78% { clip-path: inset(0 0 0 0); }
+  100% { clip-path: inset(0 0 0 0); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mochi-bot-float,
   .mochi-wave-hand,
   .mochi-orbit,
   .mochi-sparkle,
-  .mochi-sparkle-delay {
+  .mochi-sparkle-delay,
+  .mochi-loader-progress {
     animation: none;
   }
 }
