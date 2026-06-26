@@ -16,11 +16,31 @@ const jsonResponse = (body: unknown, status = 200) =>
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   })
 
+const parsePositiveInt = (value: unknown, fallback: number, max: number) => {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(max, Math.max(1, Math.floor(parsed)))
+}
+
+const applyDepositStatusFilter = (query: any, status: string) => {
+  if (!status || status === 'all') return query
+  if (status === 'success') {
+    return query.or('status.eq.success,status.eq.SUCCESS,status.eq.sukses,status.eq.SUKSES,status.eq.completed,status.eq.COMPLETED,status.eq.complete,status.eq.COMPLETE,status.eq.paid,status.eq.PAID,status.eq.settlement,status.eq.SETTLEMENT,status.eq.settled,status.eq.SETTLED')
+  }
+  if (status === 'canceled') {
+    return query.or('status.eq.canceled,status.eq.CANCELED,status.eq.cancelled,status.eq.CANCELLED,status.eq.expired,status.eq.EXPIRED,status.eq.failed,status.eq.FAILED')
+  }
+  if (status === 'pending') {
+    return query.or('status.eq.pending,status.eq.PENDING,status.eq.unpaid,status.eq.UNPAID,status.eq.process,status.eq.PROCESS')
+  }
+  return query.eq('status', status)
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   try {
-    const { initData, action, id } = await req.json()
+    const { initData, action, id, page: rawPage, pageSize: rawPageSize, status: rawStatus, sync } = await req.json()
     if (!initData || typeof initData !== 'string') {
       return jsonResponse({ error: 'Data autentikasi Telegram tidak tersedia' }, 400)
     }
@@ -48,20 +68,38 @@ serve(async (req) => {
     }
 
     if (action === 'orders') {
-      const { data, error } = await supabase
+      const page = parsePositiveInt(rawPage, 1, 100000)
+      const pageSize = parsePositiveInt(rawPageSize, 20, 50)
+      const from = (page - 1) * pageSize
+      const to = from + pageSize - 1
+      const status = String(rawStatus ?? 'all').toLowerCase()
+
+      let query = supabase
         .from('orders')
-        .select('*')
+        .select('*', { count: 'exact' })
         .eq('user_id', userId)
         .order('created_at', { ascending: false })
+        .range(from, to)
+
+      if (status !== 'all') query = query.eq('status', status)
+
+      const { data, error, count } = await query
 
       if (error) throw error
-      const orders = await Promise.all(
-        (data ?? []).map(async (order) => {
+      const shouldSync = sync !== false
+      const orders = shouldSync
+        ? await Promise.all((data ?? []).map(async (order) => {
           if (order.status !== 'active') return order
           return (await syncOrderProviderStatus(supabase, order)).order
-        }),
-      )
-      return jsonResponse({ success: true, orders })
+        }))
+        : data ?? []
+      return jsonResponse({
+        success: true,
+        orders,
+        page,
+        pageSize,
+        total: count ?? orders.length,
+      })
     }
 
     if (action === 'order') {
@@ -83,18 +121,35 @@ serve(async (req) => {
     }
 
     if (action === 'deposits') {
-      const { data, error } = await supabase
+      const page = parsePositiveInt(rawPage, 1, 100000)
+      const pageSize = parsePositiveInt(rawPageSize, 20, 50)
+      const from = (page - 1) * pageSize
+      const to = from + pageSize - 1
+      const status = String(rawStatus ?? 'all').toLowerCase()
+
+      let query = supabase
         .from('deposits')
-        .select('*')
+        .select('*', { count: 'exact' })
         .eq('user_id', userId)
         .order('created_at', { ascending: false })
+        .range(from, to)
+
+      query = applyDepositStatusFilter(query, status)
+
+      const { data, error, count } = await query
 
       if (error) throw error
       const deposits = []
       for (const deposit of data ?? []) {
-        deposits.push(await syncDepositStatus(supabase, deposit))
+        deposits.push(sync === false ? deposit : await syncDepositStatus(supabase, deposit))
       }
-      return jsonResponse({ success: true, deposits })
+      return jsonResponse({
+        success: true,
+        deposits,
+        page,
+        pageSize,
+        total: count ?? deposits.length,
+      })
     }
 
     const { data, error } = await supabase

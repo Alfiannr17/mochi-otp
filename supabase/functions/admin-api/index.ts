@@ -38,21 +38,104 @@ const asNonNegativeInteger = (value: unknown, label: string) => {
   return number
 }
 
+const sanitizeSearch = (value: unknown) =>
+  String(value ?? '')
+    .trim()
+    .replace(/[,%()]/g, ' ')
+    .slice(0, 100)
+
+const getPagination = (payload: Record<string, unknown> = {}) => {
+  const page = Math.max(1, Number.isSafeInteger(Number(payload.page)) ? Number(payload.page) : 1)
+  const requestedPageSize = Number.isSafeInteger(Number(payload.pageSize))
+    ? Number(payload.pageSize)
+    : 20
+  const pageSize = Math.min(100, Math.max(5, requestedPageSize))
+  const from = (page - 1) * pageSize
+  return {
+    page,
+    pageSize,
+    from,
+    to: from + pageSize - 1,
+  }
+}
+
+const getPagedResponse = (
+  data: unknown[] | null,
+  count: number | null,
+  page: number,
+  pageSize: number,
+) => {
+  const total = count ?? 0
+  return {
+    rows: data ?? [],
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    },
+  }
+}
+
+const DEPOSIT_SUCCESS_STATUSES = [
+  'success',
+  'SUCCESS',
+  'sukses',
+  'SUKSES',
+  'berhasil',
+  'BERHASIL',
+  'completed',
+  'COMPLETED',
+  'complete',
+  'COMPLETE',
+  'paid',
+  'PAID',
+  'settlement',
+  'SETTLEMENT',
+  'settled',
+  'SETTLED',
+]
+
+const DEPOSIT_PENDING_STATUSES = ['pending', 'PENDING', 'unpaid', 'UNPAID', 'process', 'PROCESS']
+
+const DEPOSIT_CANCELED_STATUSES = [
+  'canceled',
+  'CANCELED',
+  'cancelled',
+  'CANCELLED',
+  'expired',
+  'EXPIRED',
+  'failed',
+  'FAILED',
+]
+
+const applyStatusOr = (query: any, statuses: string[]) =>
+  query.or(statuses.map((status) => `status.eq.${status}`).join(','))
+
+const applyDepositStatusFilter = (query: any, status: string) => {
+  if (status === 'all') return query
+  if (status === 'success') return applyStatusOr(query, DEPOSIT_SUCCESS_STATUSES)
+  if (status === 'pending') return applyStatusOr(query, DEPOSIT_PENDING_STATUSES)
+  if (status === 'canceled') return applyStatusOr(query, DEPOSIT_CANCELED_STATUSES)
+  return query.eq('status', status)
+}
+
 const fetchAllRows = async (
   supabase: any,
   table: string,
   columns: string,
   orderColumn?: string,
   ascending = false,
+  filterQuery: (query: any) => any = (query) => query,
 ) => {
   const pageSize = 1000
   const rows = []
 
   for (let from = 0; ; from += pageSize) {
-    let query = supabase
+    let query = filterQuery(supabase
       .from(table)
       .select(columns)
-      .range(from, from + pageSize - 1)
+      .range(from, from + pageSize - 1))
 
     if (orderColumn) query = query.order(orderColumn, { ascending })
     const { data, error } = await query
@@ -64,6 +147,170 @@ const fetchAllRows = async (
 
   return rows
 }
+
+const countRows = async (
+  supabase: any,
+  table: string,
+  filterQuery: (query: any) => any = (query) => query,
+) => {
+  const { count, error } = await filterQuery(
+    supabase.from(table).select('*', { count: 'exact', head: true }),
+  )
+  if (error) throw error
+  return count ?? 0
+}
+
+const sumRows = async (
+  supabase: any,
+  table: string,
+  column: string,
+  filterQuery: (query: any) => any = (query) => query,
+) => {
+  const rows = await fetchAllRows(supabase, table, column, undefined, false, filterQuery)
+  return rows.reduce((total, row) => total + Number(row?.[column] || 0), 0)
+}
+
+const fetchPagedRows = async (
+  supabase: any,
+  table: string,
+  columns: string,
+  payload: Record<string, unknown>,
+  orderColumn: string,
+  filterQuery: (query: any, search: string, status: string) => any = (query) => query,
+) => {
+  const { page, pageSize, from, to } = getPagination(payload)
+  const search = sanitizeSearch(payload.search)
+  const status = String(payload.status ?? 'all')
+  let dataQuery = supabase
+    .from(table)
+    .select(columns)
+    .order(orderColumn, { ascending: false })
+    .range(from, to)
+  let countQuery = supabase
+    .from(table)
+    .select('*', { count: 'exact', head: true })
+
+  dataQuery = filterQuery(dataQuery, search, status)
+  countQuery = filterQuery(countQuery, search, status)
+
+  const [{ data, error }, { count, error: countError }] = await Promise.all([
+    dataQuery,
+    countQuery,
+  ])
+  if (error) throw error
+  if (countError) throw countError
+
+  return getPagedResponse(data, count, page, pageSize)
+}
+
+const numericSearch = (search: string) => {
+  const number = Number(search)
+  return Number.isSafeInteger(number) ? number : null
+}
+
+const normalizeUsername = (value: unknown) =>
+  String(value ?? '').trim().replace(/^@+/, '').slice(0, 64)
+
+const getTelegramProfile = async (userId: number) => {
+  const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN') ?? ''
+  if (!botToken) return { username: '', display_name: '' }
+
+  try {
+    const response = await fetch(
+      `https://api.telegram.org/bot${botToken}/getChat?chat_id=${userId}`,
+    )
+    const payload = await response.json()
+    if (!payload?.ok) return { username: '', display_name: '' }
+
+    const chat = payload.result ?? {}
+    const username = normalizeUsername(chat.username)
+    const displayName = [chat.first_name, chat.last_name]
+      .map((part) => String(part ?? '').trim())
+      .filter(Boolean)
+      .join(' ')
+      .slice(0, 96)
+
+    return {
+      username,
+      display_name: displayName || username,
+    }
+  } catch {
+    return { username: '', display_name: '' }
+  }
+}
+
+const enrichUserRows = async (supabase: any, rows: any[]) => {
+  const enriched = []
+
+  for (const row of rows) {
+    const userId = Number(row?.id)
+    const username = normalizeUsername(row?.username)
+    let displayName = username
+    let resolvedUsername = username
+
+    if (!resolvedUsername && Number.isSafeInteger(userId)) {
+      const profile = await getTelegramProfile(userId)
+      resolvedUsername = profile.username
+      displayName = profile.display_name
+
+      if (resolvedUsername) {
+        await supabase
+          .from('users')
+          .update({ username: resolvedUsername })
+          .eq('id', userId)
+      }
+    }
+
+    enriched.push({
+      ...row,
+      username: resolvedUsername || row?.username || '',
+      display_name: displayName || '',
+    })
+  }
+
+  return enriched
+}
+
+const attachUsers = async (supabase: any, rows: any[]) => {
+  const userIds = [...new Set(
+    rows
+      .map((row) => Number(row?.user_id))
+      .filter((id) => Number.isSafeInteger(id)),
+  )]
+
+  if (userIds.length === 0) return rows
+
+  const { data: users, error } = await supabase
+    .from('users')
+    .select('id,username')
+    .in('id', userIds)
+
+  if (error) throw error
+
+  const enrichedUsers = await enrichUserRows(supabase, users ?? [])
+  const userMap = new Map(enrichedUsers.map((user) => [Number(user.id), user]))
+
+  return rows.map((row) => {
+    const userId = Number(row?.user_id)
+    const user = userMap.get(userId)
+    return {
+      ...row,
+      users: user ?? {
+        id: row?.user_id,
+        username: '',
+        display_name: '',
+      },
+    }
+  })
+}
+
+const normalizeVoucher = (voucher: any) => ({
+  ...voucher,
+  batch: voucher?.batch_id ?? voucher?.batch ?? '',
+  is_active: !voucher?.is_used,
+  current_usage: voucher?.is_used ? 1 : 0,
+  max_usage: 1,
+})
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
@@ -92,50 +339,69 @@ serve(async (req) => {
     }
 
     if (action === 'dashboard.summary') {
-      const [users, orders, deposits, vouchers] = await Promise.all([
-        fetchAllRows(supabase, 'users', 'id,is_banned'),
-        fetchAllRows(supabase, 'orders', 'id,status,created_at'),
-        fetchAllRows(supabase, 'deposits', 'order_id,status,amount,created_at'),
-        fetchAllRows(supabase, 'vouchers', 'code,is_active,current_usage'),
-      ])
-
       const startOfToday = new Date()
       startOfToday.setHours(0, 0, 0, 0)
-      const isToday = (value: unknown) => {
-        const time = new Date(String(value ?? '')).getTime()
-        return Number.isFinite(time) && time >= startOfToday.getTime()
-      }
+      const startOfTodayIso = startOfToday.toISOString()
+
+      const [
+        usersTotal,
+        usersBanned,
+        ordersTotal,
+        ordersActive,
+        ordersCompleted,
+        ordersCanceled,
+        ordersToday,
+        depositsTotal,
+        depositsPending,
+        depositsSuccess,
+        depositsToday,
+        vouchersTotal,
+        vouchersActive,
+        depositsSuccessAmount,
+        vouchersClaimed,
+      ] = await Promise.all([
+        countRows(supabase, 'users'),
+        countRows(supabase, 'users', (query) => query.eq('is_banned', true)),
+        countRows(supabase, 'orders'),
+        countRows(supabase, 'orders', (query) => query.eq('status', 'active')),
+        countRows(supabase, 'orders', (query) => query.eq('status', 'completed')),
+        countRows(supabase, 'orders', (query) => query.eq('status', 'canceled')),
+        countRows(supabase, 'orders', (query) => query.gte('created_at', startOfTodayIso)),
+        countRows(supabase, 'deposits'),
+        countRows(supabase, 'deposits', (query) => applyDepositStatusFilter(query, 'pending')),
+        countRows(supabase, 'deposits', (query) => applyDepositStatusFilter(query, 'success')),
+        countRows(supabase, 'deposits', (query) => query.gte('created_at', startOfTodayIso)),
+        countRows(supabase, 'vouchers'),
+        countRows(supabase, 'vouchers', (query) => query.or('is_used.eq.false,is_used.is.null')),
+        sumRows(supabase, 'deposits', 'amount', (query) => applyDepositStatusFilter(query, 'success')),
+        countRows(supabase, 'vouchers', (query) => query.eq('is_used', true)),
+      ])
 
       return jsonResponse({
         success: true,
         summary: {
           users: {
-            total: users.length,
-            banned: users.filter((user) => user.is_banned).length,
+            total: usersTotal,
+            banned: usersBanned,
           },
           orders: {
-            total: orders.length,
-            active: orders.filter((order) => order.status === 'active').length,
-            completed: orders.filter((order) => order.status === 'completed').length,
-            canceled: orders.filter((order) => order.status === 'canceled').length,
-            today: orders.filter((order) => isToday(order.created_at)).length,
+            total: ordersTotal,
+            active: ordersActive,
+            completed: ordersCompleted,
+            canceled: ordersCanceled,
+            today: ordersToday,
           },
           deposits: {
-            total: deposits.length,
-            pending: deposits.filter((deposit) => deposit.status === 'pending').length,
-            success: deposits.filter((deposit) => deposit.status === 'success').length,
-            successAmount: deposits
-              .filter((deposit) => deposit.status === 'success')
-              .reduce((total, deposit) => total + Number(deposit.amount || 0), 0),
-            today: deposits.filter((deposit) => isToday(deposit.created_at)).length,
+            total: depositsTotal,
+            pending: depositsPending,
+            success: depositsSuccess,
+            successAmount: depositsSuccessAmount,
+            today: depositsToday,
           },
           vouchers: {
-            total: vouchers.length,
-            active: vouchers.filter((voucher) => voucher.is_active).length,
-            claimed: vouchers.reduce(
-              (total, voucher) => total + Number(voucher.current_usage || 0),
-              0,
-            ),
+            total: vouchersTotal,
+            active: vouchersActive,
+            claimed: vouchersClaimed,
           },
         },
       })
@@ -172,8 +438,30 @@ serve(async (req) => {
     }
 
     if (action === 'users.list') {
-      const users = await fetchAllRows(supabase, 'users', '*', 'joined_at')
-      return jsonResponse({ success: true, users })
+      const result = await fetchPagedRows(
+        supabase,
+        'users',
+        '*',
+        payload,
+        'id',
+        (query, search, status) => {
+          const userId = numericSearch(search)
+          let nextQuery = query
+          if (status === 'active') nextQuery = nextQuery.eq('is_banned', false)
+          if (status === 'banned') nextQuery = nextQuery.eq('is_banned', true)
+          if (search) {
+            const filters = [`username.ilike.%${search}%`]
+            if (userId !== null) filters.push(`id.eq.${userId}`)
+            nextQuery = nextQuery.or(filters.join(','))
+          }
+          return nextQuery
+        },
+      )
+      return jsonResponse({
+        success: true,
+        users: await enrichUserRows(supabase, result.rows),
+        pagination: result.pagination,
+      })
     }
 
     if (action === 'users.toggleBan') {
@@ -226,31 +514,123 @@ serve(async (req) => {
     }
 
     if (action === 'orders.list') {
-      const orders = await fetchAllRows(
+      const result = await fetchPagedRows(
         supabase,
         'orders',
-        '*, users(id,username)',
+        '*',
+        payload,
         'created_at',
+        (query, search, status) => {
+          const number = numericSearch(search)
+          let nextQuery = status === 'all' ? query : query.eq('status', status)
+          if (search) {
+            const filters = [
+              `service_name.ilike.%${search}%`,
+              `phone_number.ilike.%${search}%`,
+              `activation_id.ilike.%${search}%`,
+              `sms_code.ilike.%${search}%`,
+            ]
+            if (number !== null) {
+              filters.push(`id.eq.${number}`, `user_id.eq.${number}`, `price.eq.${number}`)
+            }
+            nextQuery = nextQuery.or(filters.join(','))
+          }
+          return nextQuery
+        },
       )
-      return jsonResponse({ success: true, orders })
+      return jsonResponse({
+        success: true,
+        orders: await attachUsers(supabase, result.rows),
+        pagination: result.pagination,
+      })
     }
 
     if (action === 'deposits.list') {
-      const deposits = await fetchAllRows(
+      const result = await fetchPagedRows(
         supabase,
         'deposits',
-        '*, users(id,username)',
+        '*',
+        payload,
         'created_at',
+        (query, search, status) => {
+          const number = numericSearch(search)
+          let nextQuery = applyDepositStatusFilter(query, status)
+          if (search) {
+            const filters = [`order_id.ilike.%${search}%`]
+            if (number !== null) {
+              filters.push(`user_id.eq.${number}`, `amount.eq.${number}`)
+            }
+            nextQuery = nextQuery.or(filters.join(','))
+          }
+          return nextQuery
+        },
       )
-      return jsonResponse({ success: true, deposits })
+      return jsonResponse({
+        success: true,
+        deposits: await attachUsers(supabase, result.rows),
+        pagination: result.pagination,
+      })
     }
 
     if (action === 'vouchers.list') {
       const [vouchers, promos] = await Promise.all([
-        fetchAllRows(supabase, 'vouchers', '*', 'created_at'),
-        fetchAllRows(supabase, 'promo_settings', '*', 'created_at'),
+        fetchPagedRows(
+          supabase,
+          'vouchers',
+          '*',
+          payload.vouchers ?? {},
+          'created_at',
+          (query, search, status) => {
+            const number = numericSearch(search)
+            let nextQuery = query
+            if (status === 'active') nextQuery = nextQuery.or('is_used.eq.false,is_used.is.null')
+            if (status === 'inactive') nextQuery = nextQuery.eq('is_used', true)
+            if (search) {
+              const filters = [
+                `code.ilike.%${search}%`,
+                `batch_id.ilike.%${search}%`,
+              ]
+              if (number !== null) {
+                filters.push(`amount.eq.${number}`, `id.eq.${number}`, `used_by.eq.${number}`)
+              }
+              nextQuery = nextQuery.or(filters.join(','))
+            }
+            return nextQuery
+          },
+        ),
+        fetchPagedRows(
+          supabase,
+          'promo_settings',
+          '*',
+          payload.promos ?? {},
+          'created_at',
+          (query, search, status) => {
+            const number = numericSearch(search)
+            let nextQuery = query
+            if (status === 'active') nextQuery = nextQuery.eq('is_active', true)
+            if (status === 'inactive') nextQuery = nextQuery.eq('is_active', false)
+            if (search) {
+              const filters = [`promo_name.ilike.%${search}%`]
+              if (number !== null) {
+                filters.push(
+                  `percentage.eq.${number}`,
+                  `min_deposit.eq.${number}`,
+                  `max_bonus.eq.${number}`,
+                )
+              }
+              nextQuery = nextQuery.or(filters.join(','))
+            }
+            return nextQuery
+          },
+        ),
       ])
-      return jsonResponse({ success: true, vouchers, promos })
+      return jsonResponse({
+        success: true,
+        vouchers: vouchers.rows.map(normalizeVoucher),
+        promos: promos.rows,
+        vouchersPagination: vouchers.pagination,
+        promosPagination: promos.pagination,
+      })
     }
 
     if (action === 'vouchers.create') {
@@ -263,14 +643,16 @@ serve(async (req) => {
         .from('vouchers')
         .insert({
           code,
-          batch,
+          batch_id: batch,
           amount: asPositiveNumber(payload.amount, 'Nominal voucher'),
-          max_usage: asPositiveInteger(payload.max_usage, 'Batas penggunaan'),
+          is_used: false,
+          used_by: null,
+          used_at: null,
         })
         .select('*')
         .single()
       if (error) throw error
-      return jsonResponse({ success: true, voucher: data })
+      return jsonResponse({ success: true, voucher: normalizeVoucher(data) })
     }
 
     if (action === 'vouchers.toggle') {
@@ -278,38 +660,27 @@ serve(async (req) => {
       if (!code) throw new Error('Kode voucher tidak valid')
       const { data, error } = await supabase
         .from('vouchers')
-        .update({ is_active: Boolean(payload.isActive) })
+        .update(Boolean(payload.isActive)
+          ? { is_used: false, used_by: null, used_at: null }
+          : { is_used: true })
         .eq('code', code)
         .select('*')
         .single()
       if (error) throw error
-      return jsonResponse({ success: true, voucher: data })
+      return jsonResponse({ success: true, voucher: normalizeVoucher(data) })
     }
 
     if (action === 'vouchers.updateMaxUsage') {
       const code = String(payload.code ?? '').trim().toUpperCase()
-      const maxUsage = asPositiveInteger(payload.max_usage, 'Batas penggunaan')
       if (!code) throw new Error('Kode voucher tidak valid')
-
-      const { data: currentVoucher, error: currentError } = await supabase
-        .from('vouchers')
-        .select('current_usage')
-        .eq('code', code)
-        .single()
-
-      if (currentError || !currentVoucher) throw new Error('Voucher tidak ditemukan')
-      if (maxUsage < Number(currentVoucher.current_usage || 0)) {
-        throw new Error('Batas penggunaan tidak boleh lebih kecil dari jumlah klaim saat ini')
-      }
 
       const { data, error } = await supabase
         .from('vouchers')
-        .update({ max_usage: maxUsage })
-        .eq('code', code)
         .select('*')
+        .eq('code', code)
         .single()
       if (error) throw error
-      return jsonResponse({ success: true, voucher: data })
+      return jsonResponse({ success: true, voucher: normalizeVoucher(data) })
     }
 
     if (action === 'promo.save') {

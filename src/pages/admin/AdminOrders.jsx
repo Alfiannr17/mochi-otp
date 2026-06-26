@@ -1,9 +1,12 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import { adminApi } from '../../lib/adminApi';
 import { OrderIcon } from '../../components/Icons';
 import AdminFilterBar from '../../components/admin/AdminFilterBar';
 import { parseOtpState } from '../../lib/otpHistory';
 import MochiLoader from '../../components/MochiLoader';
+import AdminPagination from '../../components/admin/AdminPagination';
+
+const PAGE_SIZE = 20;
 
 const formatPhoneNumber = (phoneNumber) => {
   if (!phoneNumber) return 'Pending';
@@ -18,38 +21,55 @@ const formatDate = (value) => {
 
 const formatRupiah = (value) => `Rp.${Number(value || 0).toLocaleString('id-ID')}`;
 
+const formatUserLabel = (userId, user) => {
+  const username = String(user?.username || '').trim().replace(/^@+/, '');
+  if (username) return `@${username}`;
+  if (user?.display_name) return user.display_name;
+  return `ID: ${userId || '-'}`;
+};
+
 export default function AdminOrders() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState({
+    page: 1,
+    pageSize: PAGE_SIZE,
+    total: 0,
+    totalPages: 1,
+  });
+
+  const fetchOrders = useCallback(async () => {
+    setLoading(true);
+    setErrorMessage('');
+    try {
+      const data = await adminApi('orders.list', {
+        page,
+        pageSize: PAGE_SIZE,
+        search,
+        status: statusFilter,
+      });
+      setOrders(data.orders || []);
+      setPagination(data.pagination || {
+        page,
+        pageSize: PAGE_SIZE,
+        total: data.orders?.length || 0,
+        totalPages: 1,
+      });
+    } catch (error) {
+      setErrorMessage(error.message || 'Gagal memuat data order.');
+    } finally {
+      setLoading(false);
+    }
+  }, [page, search, statusFilter]);
 
   useEffect(() => {
-    let active = true;
-    const fetchOrders = async () => {
-      setLoading(true);
-      setErrorMessage('');
-      try {
-        const data = await adminApi('orders.list');
-        if (active) {
-          setOrders(data.orders || []);
-        }
-      } catch (error) {
-        if (active) {
-          setErrorMessage(error.message || 'Gagal memuat data order.');
-        }
-      } finally {
-        if (active) {
-          setLoading(false);
-        }
-      }
-    };
-    fetchOrders();
-    return () => {
-      active = false;
-    };
-  }, []);
+    const timeout = window.setTimeout(fetchOrders, 0);
+    return () => window.clearTimeout(timeout);
+  }, [fetchOrders]);
 
   const getBadgeColor = (status) => {
     if (status === 'completed') return 'bg-mochi-green';
@@ -64,21 +84,15 @@ export default function AdminOrders() {
     return status || 'Unknown';
   };
 
-  const filteredOrders = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return orders.filter((order) => {
-      const matchesSearch = !query || [
-        order.id,
-        order.user_id,
-        order.users?.username,
-        order.service_name,
-        order.phone_number,
-        order.sms_code,
-        order.activation_id,
-      ].some((value) => String(value ?? '').toLowerCase().includes(query));
-      return matchesSearch && (statusFilter === 'all' || order.status === statusFilter);
-    });
-  }, [orders, search, statusFilter]);
+  const handleSearchChange = (value) => {
+    setSearch(value);
+    setPage(1);
+  };
+
+  const handleStatusChange = (value) => {
+    setStatusFilter(value);
+    setPage(1);
+  };
 
   return (
     <div className="pb-8">
@@ -86,17 +100,24 @@ export default function AdminOrders() {
       {errorMessage && <div className="mb-5 border-4 border-black rounded-xl bg-red-300 p-4 font-bold shadow-neo">{errorMessage}</div>}
       <AdminFilterBar
         search={search}
-        onSearchChange={setSearch}
+        onSearchChange={handleSearchChange}
         placeholder="Cari order, user, layanan, nomor, atau OTP..."
         filter={statusFilter}
-        onFilterChange={setStatusFilter}
+        onFilterChange={handleStatusChange}
         options={[
           { value: 'all', label: 'Semua Status' },
           { value: 'active', label: 'Aktif' },
           { value: 'completed', label: 'Selesai' },
           { value: 'canceled', label: 'Dibatalkan' },
         ]}
-        resultCount={filteredOrders.length}
+        resultCount={pagination.total}
+      />
+      <AdminPagination
+        page={pagination.page}
+        totalPages={pagination.totalPages}
+        total={pagination.total}
+        pageSize={pagination.pageSize}
+        onPageChange={setPage}
       />
       
       <div className="border-2 border-black rounded-xl bg-white shadow-neo overflow-x-auto">
@@ -114,16 +135,16 @@ export default function AdminOrders() {
           <tbody>
             {loading ? (
               <tr><td colSpan="6"><MochiLoader compact message="Memuat data order..." /></td></tr>
-            ) : filteredOrders.length === 0 ? (
+            ) : orders.length === 0 ? (
               <tr><td colSpan="6" className="p-8 text-center font-bold">Order tidak ditemukan.</td></tr>
-            ) : filteredOrders.map((o) => (
+            ) : orders.map((o) => (
               <tr key={o.id} className="border-b-2 border-black last:border-b-0 hover:bg-gray-50">
                 <td className="p-3 border-r-2 border-black text-xs whitespace-nowrap">
                   {formatDate(o.created_at)}
                   <span className="block mt-1 text-[10px] text-gray-500">ID: {o.id}</span>
                 </td>
                 <td className="p-3 border-r-2 border-black font-bold text-xs">
-                  {o.users?.username ? `@${o.users.username}` : o.users?.id || o.user_id || 'Unknown'}
+                  {formatUserLabel(o.user_id, o.users)}
                 </td>
                 <td className="p-3 border-r-2 border-black font-bold text-xs">
                   {o.service_name} <br/>
@@ -168,6 +189,13 @@ export default function AdminOrders() {
           </tbody>
         </table>
       </div>
+      <AdminPagination
+        page={pagination.page}
+        totalPages={pagination.totalPages}
+        total={pagination.total}
+        pageSize={pagination.pageSize}
+        onPageChange={setPage}
+      />
     </div>
   );
 }

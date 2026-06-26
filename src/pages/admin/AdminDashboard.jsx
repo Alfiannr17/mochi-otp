@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { adminApi } from '../../lib/adminApi';
 import { DashboardIcon, GiftIcon, OrderIcon, UsersIcon, WalletIcon } from '../../components/Icons';
-import MochiLoader from '../../components/MochiLoader';
 
 const formatRupiah = (value) => `Rp.${Number(value || 0).toLocaleString('id-ID')}`;
 
@@ -43,14 +42,14 @@ export default function AdminDashboard() {
         </p>
       </div>
 
-      {errorMessage && <div className="mb-5 border-4 border-black rounded-xl bg-red-300 p-4 font-bold shadow-neo">{errorMessage}</div>}
+      {errorMessage && <div className="mb-5 border-2 border-black rounded-xl bg-red-300 p-4 font-bold shadow-neo">{errorMessage}</div>}
 
       {!summary && !errorMessage ? (
-        <MochiLoader message="Memuat statistik..." />
+        <div className="border-2 border-black rounded-xl bg-white p-8 text-center font-black shadow-neo">Memuat statistik...</div>
       ) : summary ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
           {cards.map(({ label, value, detail, icon: Icon, color }) => (
-            <div key={label} className={`border-4 border-black rounded-xl p-5 shadow-neo ${color}`}>
+            <div key={label} className={`border-2 border-black rounded-xl p-5 shadow-neo ${color}`}>
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-xs font-black uppercase">{label}</p>

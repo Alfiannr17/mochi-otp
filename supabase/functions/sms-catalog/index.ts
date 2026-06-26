@@ -1,5 +1,4 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3"
 import {
   calculateMochiPrice,
   fetchSmsJson,
@@ -9,8 +8,6 @@ import {
 } from "../_shared/smsbower.ts"
 import { calculateIdrMochiPrice } from "../_shared/pricing.ts"
 import { getSmsCodeCatalog, getSmsCodeProducts } from "../_shared/smscode.ts"
-import { getPublicProviderError } from "../_shared/public-error.ts"
-import { getFeatureSetting, getProviderFeatureKey } from "../_shared/feature-settings.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -27,24 +24,9 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   try {
-    const { action, provider = 'smsbower', serviceCode, serviceId, countryId } = await req.json()
-    if (!['smsbower', 'smscode'].includes(provider)) {
-      return jsonResponse({ error: 'Server order tidak valid' }, 400)
-    }
+    const { action, provider = 'Server', serviceCode, serviceId, countryId } = await req.json()
 
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-    )
-    const feature = await getFeatureSetting(supabase, getProviderFeatureKey(provider))
-    if (!feature.is_active) {
-      return jsonResponse({
-        error: feature.maintenance_message,
-        maintenance: true,
-      }, 503)
-    }
-
-    if (provider === 'smscode') {
+    if (provider === 'Server') {
       if (action === 'getCatalog') {
         const catalog = await getSmsCodeCatalog()
         return jsonResponse({ success: true, provider, ...catalog })
@@ -149,9 +131,6 @@ serve(async (req) => {
 
     return jsonResponse({ error: 'Action tidak valid' }, 400)
   } catch (error) {
-    console.error('sms-catalog provider error:', error)
-    return jsonResponse({
-      error: getPublicProviderError(error, 'Katalog dari Server gagal dimuat. Silakan coba lagi.'),
-    }, 500)
+    return jsonResponse({ error: error.message }, 500)
   }
 })

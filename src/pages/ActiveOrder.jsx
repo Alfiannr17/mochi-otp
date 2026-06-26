@@ -14,6 +14,8 @@ import { markOtpCodesSeen, notifyNewOtpCodes } from '../lib/otpNotification';
 const SERVER1_ORDER_LIFETIME_MS = 25 * 60 * 1000;
 const SERVER2_ORDER_LIFETIME_MS = 20 * 60 * 1000;
 const SERVER2_CANCEL_DELAY_MS = 2 * 60 * 1000;
+const ACTIVE_ORDER_POLL_MS = 7000;
+const PROVIDER_FALLBACK_EVERY_POLLS = 5;
 
 const getOrderLifetimeMs = (order) =>
   String(order?.activation_id || '').startsWith('smscode:')
@@ -38,6 +40,8 @@ const formatTime = (seconds) => {
   const remainingSeconds = (seconds % 60).toString().padStart(2, '0');
   return `${minutes}:${remainingSeconds}`;
 };
+
+const formatRupiah = (value) => `Rp.${Number(value || 0).toLocaleString('id-ID')}`;
 
 const getFunctionErrorMessage = async (error, fallback) => {
   try {
@@ -75,6 +79,7 @@ export default function ActiveOrder() {
   const [pollMessage, setPollMessage] = useState('');
   const expiryRequested = useRef(false);
   const pollInFlight = useRef(false);
+  const providerFallbackTick = useRef(0);
   const hasReceivedOtp = otpCodes.length > 0;
   const isServer2 = String(order?.activation_id || '').startsWith('smscode:');
   const hasMissingServer2Message = isServer2 &&
@@ -128,11 +133,15 @@ export default function ActiveOrder() {
     ) return;
 
     pollInFlight.current = true;
+    providerFallbackTick.current += 1;
+    const shouldUseProviderFallback =
+      providerFallbackTick.current % PROVIDER_FALLBACK_EVERY_POLLS === 0;
     try {
       const { data, error } = await supabase.functions.invoke('check-sms', {
         body: {
           orderId: order.id,
           activationId: order.activation_id,
+          providerFallback: shouldUseProviderFallback,
         },
       });
 
@@ -299,8 +308,11 @@ export default function ActiveOrder() {
       isCanceled ||
       isCompleted
     ) return undefined;
-    const initialPoll = window.setTimeout(checkSmsStatus, 0);
-    const pollInterval = window.setInterval(checkSmsStatus, 5000);
+    const runVisiblePoll = () => {
+      if (document.visibilityState === 'visible') checkSmsStatus();
+    };
+    const initialPoll = window.setTimeout(runVisiblePoll, 0);
+    const pollInterval = window.setInterval(runVisiblePoll, ACTIVE_ORDER_POLL_MS);
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') checkSmsStatus();
     };
@@ -388,6 +400,11 @@ export default function ActiveOrder() {
       <div className="border-2 border-black rounded-xl bg-white shadow-neo p-6 mb-6 text-center relative overflow-hidden">
         <div className="inline-block bg-mochi-green border-2 border-black rounded-full px-4 py-1 font-bold text-xs mb-4 shadow-neo">
           {order.service_name}
+        </div>
+
+        <div className="mx-auto mb-5 w-full max-w-xs border-2 border-black rounded-xl bg-mochi-bg p-3 shadow-neo">
+          <p className="text-[10px] font-black text-gray-500 uppercase mb-1">Harga Produk</p>
+          <p className="text-2xl font-black text-purple-700">{formatRupiah(order.price)}</p>
         </div>
 
         <p className="text-xs font-bold text-gray-500 mb-1">Nomor Handphone</p>

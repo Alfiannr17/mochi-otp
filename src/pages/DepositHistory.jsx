@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchUserData } from '../lib/userData';
 import MochiLoader from '../components/MochiLoader';
 import { HistoryFilter, HistoryPagination } from '../components/HistoryControls';
 
 const PAGE_SIZE = 10;
+const HISTORY_REFRESH_MS = 60_000;
 const DEPOSIT_FILTERS = [
   { value: 'all', label: 'Semua Status' },
   { value: 'pending', label: 'Pending' },
@@ -30,40 +31,48 @@ export default function DepositHistory() {
   const [errorMessage, setErrorMessage] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const fetchInFlight = useRef(false);
 
   const loadDeposits = useCallback(async () => {
+    if (fetchInFlight.current) return;
+    fetchInFlight.current = true;
     try {
-      const data = await fetchUserData('deposits');
+      const data = await fetchUserData('deposits', {
+        page,
+        pageSize: PAGE_SIZE,
+        status: statusFilter,
+        sync: false,
+      });
       setDeposits(data.deposits || []);
+      setTotalCount(Number(data.total || 0));
       setErrorMessage('');
     } catch (error) {
       setErrorMessage(error.message || 'Gagal memuat riwayat deposit.');
     } finally {
       setLoading(false);
+      fetchInFlight.current = false;
     }
-  }, []);
+  }, [page, statusFilter]);
 
   useEffect(() => {
     const initialLoad = window.setTimeout(loadDeposits, 0);
-    const interval = window.setInterval(loadDeposits, 10000);
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') loadDeposits();
+    }, HISTORY_REFRESH_MS);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') loadDeposits();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       window.clearTimeout(initialLoad);
       window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [loadDeposits]);
 
-  const filteredDeposits = useMemo(
-    () => deposits.filter((deposit) =>
-      statusFilter === 'all' || normalizeDepositStatus(deposit.status) === statusFilter
-    ),
-    [deposits, statusFilter],
-  );
-  const totalPages = Math.max(1, Math.ceil(filteredDeposits.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const effectivePage = Math.min(page, totalPages);
-  const visibleDeposits = useMemo(
-    () => filteredDeposits.slice((effectivePage - 1) * PAGE_SIZE, effectivePage * PAGE_SIZE),
-    [effectivePage, filteredDeposits],
-  );
 
   const handleFilterChange = (value) => {
     setStatusFilter(value);
@@ -80,7 +89,7 @@ export default function DepositHistory() {
           value={statusFilter}
           onChange={handleFilterChange}
           options={DEPOSIT_FILTERS}
-          resultCount={filteredDeposits.length}
+          resultCount={totalCount}
         />
       )}
 
@@ -100,13 +109,13 @@ export default function DepositHistory() {
         </div>
       ) : deposits.length === 0 ? (
         <div className="border-2 border-black rounded-xl bg-white p-6 text-center font-black shadow-neo">
-          Belum ada riwayat deposit.
+          {statusFilter === 'all' ? 'Belum ada riwayat deposit.' : 'Tidak ada deposit dengan status ini.'}
         </div>
       ) : (
         <>
-          {visibleDeposits.length > 0 ? (
+          {deposits.length > 0 ? (
             <div className="space-y-4">
-              {visibleDeposits.map((deposit) => (
+              {deposits.map((deposit) => (
                 <button
                   type="button"
                   key={deposit.order_id}

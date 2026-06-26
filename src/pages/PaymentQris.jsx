@@ -10,6 +10,7 @@ import { sanitizePublicError } from '../lib/publicError';
 import MochiLoader from '../components/MochiLoader';
 
 const DEPOSIT_LIFETIME_MS = 30 * 60 * 1000;
+const DEPOSIT_STATUS_POLL_MS = 10_000;
 
 const getTimeLeft = (invoice) => {
   const createdAt = new Date(invoice?.createdAt).getTime();
@@ -154,8 +155,18 @@ export default function PaymentQris() {
 
   useEffect(() => {
     if (!invoice?.orderId) return undefined;
-    const interval = window.setInterval(() => checkPaymentStatus({ silent: true }), 5000);
-    return () => window.clearInterval(interval);
+    const runVisibleCheck = () => {
+      if (document.visibilityState === 'visible') checkPaymentStatus({ silent: true });
+    };
+    const interval = window.setInterval(runVisibleCheck, DEPOSIT_STATUS_POLL_MS);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') checkPaymentStatus({ silent: true });
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, [checkPaymentStatus, invoice?.orderId]);
 
   if (loading) {

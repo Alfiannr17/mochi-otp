@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3"
 import { parseOtpState } from "../_shared/otp-history.ts"
 import { syncOrderProviderStatus } from "../_shared/order-sync.ts"
+import { expireOrderIfNeeded } from "../_shared/order-expiry.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -18,7 +19,7 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   try {
-    const { orderId, activationId } = await req.json()
+    const { orderId, activationId, providerFallback = false } = await req.json()
     if (!orderId || !activationId) return jsonResponse({ error: 'Data order tidak lengkap' }, 400)
 
     const supabase = createClient(
@@ -28,7 +29,7 @@ serve(async (req) => {
 
     const { data: order, error: orderError } = await supabase
       .from('orders')
-      .select('id, activation_id, status, sms_code, created_at')
+      .select('id, user_id, activation_id, status, sms_code, created_at, price')
       .eq('id', orderId)
       .single()
 
@@ -36,7 +37,9 @@ serve(async (req) => {
       return jsonResponse({ error: 'Order tidak ditemukan' }, 404)
     }
 
-    const { order: syncedOrder, providerError } = await syncOrderProviderStatus(supabase, order)
+    const { order: syncedOrder, providerError } = providerFallback
+      ? await syncOrderProviderStatus(supabase, order)
+      : { order: await expireOrderIfNeeded(supabase, order), providerError: null }
     const otpState = parseOtpState(syncedOrder.sms_code)
 
     if (syncedOrder.status === 'completed') {

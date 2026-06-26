@@ -1,8 +1,18 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import { adminApi } from '../../lib/adminApi';
 import { WalletIcon } from '../../components/Icons';
 import AdminFilterBar from '../../components/admin/AdminFilterBar';
 import MochiLoader from '../../components/MochiLoader';
+import AdminPagination from '../../components/admin/AdminPagination';
+
+const PAGE_SIZE = 20;
+
+const formatUserLabel = (userId, user) => {
+  const username = String(user?.username || '').trim().replace(/^@+/, '');
+  if (username) return `@${username}`;
+  if (user?.display_name) return user.display_name;
+  return `ID: ${userId || '-'}`;
+};
 
 export default function AdminDeposits() {
   const [deposits, setDeposits] = useState([]);
@@ -10,26 +20,42 @@ export default function AdminDeposits() {
   const [errorMessage, setErrorMessage] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState({
+    page: 1,
+    pageSize: PAGE_SIZE,
+    total: 0,
+    totalPages: 1,
+  });
+
+  const loadDeposits = useCallback(async () => {
+    setLoading(true);
+    setErrorMessage('');
+    try {
+      const result = await adminApi('deposits.list', {
+        page,
+        pageSize: PAGE_SIZE,
+        search,
+        status: statusFilter,
+      });
+      setDeposits(result.deposits || []);
+      setPagination(result.pagination || {
+        page,
+        pageSize: PAGE_SIZE,
+        total: result.deposits?.length || 0,
+        totalPages: 1,
+      });
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, search, statusFilter]);
 
   useEffect(() => {
-    let active = true;
-
-    const loadDeposits = async () => {
-      try {
-        const result = await adminApi('deposits.list');
-        if (active) setDeposits(result.deposits);
-      } catch (error) {
-        if (active) setErrorMessage(error.message);
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-
-    loadDeposits();
-    return () => {
-      active = false;
-    };
-  }, []);
+    const timeout = window.setTimeout(loadDeposits, 0);
+    return () => window.clearTimeout(timeout);
+  }, [loadDeposits]);
 
   const getStatusColor = (status) => {
     if (status === 'success') return 'bg-mochi-green';
@@ -37,18 +63,15 @@ export default function AdminDeposits() {
     return 'bg-yellow-300';
   };
 
-  const filteredDeposits = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return deposits.filter((deposit) => {
-      const matchesSearch = !query || [
-        deposit.order_id,
-        deposit.user_id,
-        deposit.users?.username,
-        deposit.amount,
-      ].some((value) => String(value ?? '').toLowerCase().includes(query));
-      return matchesSearch && (statusFilter === 'all' || deposit.status === statusFilter);
-    });
-  }, [deposits, search, statusFilter]);
+  const handleSearchChange = (value) => {
+    setSearch(value);
+    setPage(1);
+  };
+
+  const handleStatusChange = (value) => {
+    setStatusFilter(value);
+    setPage(1);
+  };
 
   return (
     <div className="pb-8">
@@ -56,10 +79,10 @@ export default function AdminDeposits() {
       {errorMessage && <div className="mb-5 border-2 border-black rounded-xl bg-red-300 p-4 font-bold shadow-neo">{errorMessage}</div>}
       <AdminFilterBar
         search={search}
-        onSearchChange={setSearch}
+        onSearchChange={handleSearchChange}
         placeholder="Cari order ID, user, atau nominal..."
         filter={statusFilter}
-        onFilterChange={setStatusFilter}
+        onFilterChange={handleStatusChange}
         options={[
           { value: 'all', label: 'Semua Status' },
           { value: 'pending', label: 'Pending' },
@@ -68,7 +91,7 @@ export default function AdminDeposits() {
           { value: 'expired', label: 'Kedaluwarsa' },
           { value: 'failed', label: 'Gagal' },
         ]}
-        resultCount={filteredDeposits.length}
+        resultCount={pagination.total}
       />
       
       <div className="border-2 border-black rounded-xl bg-white shadow-neo overflow-x-auto">
@@ -85,16 +108,16 @@ export default function AdminDeposits() {
           <tbody>
             {loading ? (
               <tr><td colSpan="5"><MochiLoader compact message="Memuat data deposit..." /></td></tr>
-            ) : filteredDeposits.length === 0 ? (
+            ) : deposits.length === 0 ? (
               <tr><td colSpan="5" className="p-8 text-center font-bold">Deposit tidak ditemukan.</td></tr>
-            ) : filteredDeposits.map((d) => (
+            ) : deposits.map((d) => (
               <tr key={d.order_id} className="border-b-2 border-black last:border-b-0 hover:bg-gray-50">
                 <td className="p-3 border-r-2 border-black text-xs font-bold">{d.order_id}</td>
                 <td className="p-3 border-r-2 border-black text-xs">
                   {new Date(d.created_at).toLocaleString('id-ID')}
                 </td>
                 <td className="p-3 border-r-2 border-black font-bold text-xs">
-                  {d.users?.username || d.users?.id || d.user_id || 'Unknown'}
+                  {formatUserLabel(d.user_id, d.users)}
                 </td>
                 <td className="p-3 border-r-2 border-black font-black text-green-600 text-sm">
                   Rp.{Number(d.amount).toLocaleString('id-ID')}
@@ -109,6 +132,13 @@ export default function AdminDeposits() {
           </tbody>
         </table>
       </div>
+      <AdminPagination
+        page={pagination.page}
+        totalPages={pagination.totalPages}
+        total={pagination.total}
+        pageSize={pagination.pageSize}
+        onPageChange={setPage}
+      />
     </div>
   );
 }

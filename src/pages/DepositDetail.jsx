@@ -11,6 +11,7 @@ import QRCode from 'qrcode';
 import MochiLoader from '../components/MochiLoader';
 
 const DEPOSIT_LIFETIME_MS = 30 * 60 * 1000;
+const DEPOSIT_STATUS_POLL_MS = 10_000;
 
 const getTimeLeft = (deposit) => {
   const createdAt = new Date(deposit?.created_at).getTime();
@@ -122,8 +123,17 @@ export default function DepositDetail() {
 
   useEffect(() => {
     if (!deposit || deposit.status !== 'pending') return undefined;
-    const interval = window.setInterval(() => checkStatus({ silent: true }), 5000);
-    return () => window.clearInterval(interval);
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') checkStatus({ silent: true });
+    }, DEPOSIT_STATUS_POLL_MS);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') checkStatus({ silent: true });
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, [checkStatus, deposit]);
 
   useEffect(() => {

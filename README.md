@@ -341,7 +341,7 @@ vouchers
 voucher_claims
 promo_settings
 feature_settings
-checkin
+checkins
 ```
 
 Untuk memeriksa melalui SQL Editor tanpa mengubah data:
@@ -358,7 +358,7 @@ where table_schema = 'public'
     'voucher_claims',
     'promo_settings',
     'feature_settings',
-    'checkin'
+    'checkins'
   )
 order by table_name;
 ```
@@ -380,8 +380,24 @@ vouchers: code, amount, batch, max_usage, current_usage, is_active, created_at
 voucher_claims: id, user_id, voucher_code, created_at
 promo_settings: id, promo_name, percentage, min_deposit, max_bonus, is_active, created_at
 feature_settings: feature_key, is_active, maintenance_message, updated_at
-checkin: id, user_id, amount, created_at
+checkins: id, user_id, last_checkin, amount, checkin_date
 ```
+
+Tabel `checkins` wajib mengikuti struktur database real:
+
+```sql
+CREATE TABLE public.checkins (
+  id bigint,
+  user_id bigint,
+  last_checkin timestamp with time zone,
+  amount bigint,
+  checkin_date date
+);
+```
+
+Fitur saldo harian memakai `last_checkin` untuk menghitung cooldown 24 jam. Kolom `checkin_date` tetap diisi sebagai catatan tanggal check-in berdasarkan waktu Indonesia.
+
+Jika tabel `checkins` kamu sudah ada, jangan buat ulang tabelnya. Cukup pastikan kolom di atas tersedia.
 
 Perhatian khusus untuk `orders.sms_code`:
 
@@ -414,7 +430,7 @@ supabase/migrations/20260615010000_create_feature_settings.sql
 
 Jika tabel `feature_settings` beserta ketiga row `server1`, `server2`, dan `deposit` sudah tersedia, jangan menjalankan migration tersebut lagi.
 
-Saldo harian tidak membutuhkan migration tambahan. Edge Function `daily-checkin` membaca `created_at` terakhir berdasarkan `checkin.user_id`, lalu menghitung waktu klaim berikutnya dengan menambahkan 24 jam. Proses ini tidak memakai reset pukul 00.00.
+Saldo harian tidak membutuhkan tabel baru. Edge Function `daily-checkin` membaca `last_checkin` terakhir berdasarkan `checkins.user_id`, lalu menghitung waktu klaim berikutnya dengan menambahkan 24 jam. Proses ini tidak memakai reset pukul 00.00.
 
 Saat fitur order dinonaktifkan, hanya katalog dan order baru yang diblokir. Order aktif, OTP, refund, dan riwayat tetap berjalan. Saat Deposit dinonaktifkan, hanya pembuatan QRIS baru yang diblokir; pembayaran dan riwayat deposit lama tetap dapat diperiksa.
 
@@ -436,7 +452,7 @@ where table_schema = 'public'
     'voucher_claims',
     'promo_settings',
     'feature_settings',
-    'checkin'
+    'checkins'
   )
 order by table_name, ordinal_position;
 ```
@@ -1454,7 +1470,7 @@ Gunakan daftar ini tepat sebelum aplikasi diumumkan ke user:
 [ ] Tabel dan kolom database kamu sesuai langkah 5.
 [ ] promo_settings memakai percentage dan max_bonus, bukan bonus_percentage.
 [ ] Migration feature_settings sudah dijalankan dan menu Fitur & Maintenance dapat disimpan.
-[ ] Saldo harian memakai cooldown tepat 24 jam berdasarkan `checkin.created_at`.
+[ ] Saldo harian memakai cooldown tepat 24 jam berdasarkan `checkins.last_checkin`.
 [ ] Vercel/VPS memakai VITE_SUPABASE_URL dan anon key project kamu.
 [ ] Semua Supabase secrets berasal dari akun kamu.
 [ ] TELEGRAM_CHANNEL_URL dan TELEGRAM_CS_URL sudah benar.

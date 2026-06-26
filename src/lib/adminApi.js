@@ -3,7 +3,9 @@ import WebApp from './telegram';
 
 const getFunctionErrorMessage = async (error) => {
   try {
-    const payload = await error?.context?.json();
+    const payload = error?.context?.clone
+      ? await error.context.clone().json()
+      : await error?.context?.json?.();
     return payload?.error || payload?.message || error?.message;
   } catch {
     return error?.message;

@@ -423,6 +423,18 @@ entrypoint = "./functions/pakasir-webhook/index.ts"
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/pakasir-webhook/*.html" ]
 
+[functions.smsbower-webhook]
+enabled = true
+verify_jwt = false
+import_map = "./functions/smsbower-webhook/deno.json"
+entrypoint = "./functions/smsbower-webhook/index.ts"
+
+[functions.smscode-webhook]
+enabled = true
+verify_jwt = false
+import_map = "./functions/smscode-webhook/deno.json"
+entrypoint = "./functions/smscode-webhook/index.ts"
+
 [functions.buy-number]
 enabled = true
 verify_jwt = false

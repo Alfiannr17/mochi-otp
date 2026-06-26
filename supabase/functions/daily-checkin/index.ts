@@ -15,10 +15,44 @@ const jsonResponse = (body: unknown, status = 200) =>
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   })
 
-const getNextCheckInAt = (createdAt?: string | null) =>
-  createdAt
-    ? new Date(new Date(createdAt).getTime() + CHECKIN_COOLDOWN_MS).toISOString()
+const jakartaDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Jakarta',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
+const getCheckInDate = (date: Date) => jakartaDateFormatter.format(date)
+
+const getNextCheckInAt = (lastCheckInAt?: string | null) =>
+  lastCheckInAt
+    ? new Date(new Date(lastCheckInAt).getTime() + CHECKIN_COOLDOWN_MS).toISOString()
     : null
+
+const getPublicCheckInError = (message: string) => {
+  const normalized = message.toLowerCase()
+
+  if (normalized.includes('last_checkin') && normalized.includes('does not exist')) {
+    return 'Tabel checkins belum memiliki kolom last_checkin. Sesuaikan struktur database saldo harian.'
+  }
+  if (normalized.includes('checkin_date') && normalized.includes('does not exist')) {
+    return 'Tabel checkins belum memiliki kolom checkin_date. Sesuaikan struktur database saldo harian.'
+  }
+  if (normalized.includes('checkin') || normalized.includes('column') || normalized.includes('schema cache')) {
+    return 'Fitur saldo harian belum sesuai dengan struktur database. Hubungi admin.'
+  }
+  if (normalized.includes('permission') || normalized.includes('row-level security') || normalized.includes('rls')) {
+    return 'Fitur saldo harian belum memiliki izin database. Hubungi admin.'
+  }
+  if (normalized.includes('duplicate') || normalized.includes('unique')) {
+    return 'Saldo harian sudah pernah diproses. Silakan buka ulang halaman.'
+  }
+  if (normalized.includes('telegram') || normalized.includes('autentikasi')) {
+    return message
+  }
+
+  return 'Saldo harian gagal diproses.'
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
@@ -43,10 +77,10 @@ serve(async (req) => {
       const [{ data: user, error: userError }, { data: lastCheckIn, error: checkInError }] = await Promise.all([
         supabase.from('users').select('balance').eq('id', userId).maybeSingle(),
         supabase
-          .from('checkin')
-          .select('created_at')
+          .from('checkins')
+          .select('last_checkin')
           .eq('user_id', userId)
-          .order('created_at', { ascending: false })
+          .order('last_checkin', { ascending: false, nullsFirst: false })
           .limit(1)
           .maybeSingle(),
       ])
@@ -55,7 +89,7 @@ serve(async (req) => {
       if (checkInError) throw checkInError
       if (!user) return jsonResponse({ error: 'Akun Telegram belum terdaftar di sistem.' }, 404)
 
-      const nextCheckInAt = getNextCheckInAt(lastCheckIn?.created_at)
+      const nextCheckInAt = getNextCheckInAt(lastCheckIn?.last_checkin)
       if (nextCheckInAt && new Date(nextCheckInAt).getTime() > Date.now()) {
         return jsonResponse({
           success: false,
@@ -68,13 +102,21 @@ serve(async (req) => {
       const randomValue = crypto.getRandomValues(new Uint32Array(1))[0]
       const bonus = (randomValue % 201) + 50
       const currentBalance = Number(user.balance || 0)
+      const claimedAt = new Date()
+      const claimedAtIso = claimedAt.toISOString()
       const { data: insertedCheckIn, error: insertError } = await supabase
-        .from('checkin')
-        .insert({ user_id: userId, amount: bonus })
-        .select('id, created_at')
+        .from('checkins')
+        .insert({
+          user_id: userId,
+          amount: bonus,
+          last_checkin: claimedAtIso,
+          checkin_date: getCheckInDate(claimedAt),
+        })
+        .select('id, last_checkin')
         .single()
 
       if (insertError) throw insertError
+      if (!insertedCheckIn) throw new Error('Check-in berhasil dibuat tetapi data insert tidak terbaca.')
 
       let balanceUpdate = supabase
         .from('users')
@@ -90,11 +132,13 @@ serve(async (req) => {
         .maybeSingle()
 
       if (balanceError || !updatedUser) {
-        const { error: rollbackError } = await supabase
-          .from('checkin')
+        const rollbackQuery = supabase
+          .from('checkins')
           .delete()
-          .eq('id', insertedCheckIn.id)
           .eq('user_id', userId)
+        const { error: rollbackError } = insertedCheckIn?.id != null
+          ? await rollbackQuery.eq('id', insertedCheckIn.id)
+          : await rollbackQuery.eq('last_checkin', insertedCheckIn?.last_checkin ?? claimedAtIso)
 
         if (rollbackError) throw rollbackError
         if (balanceError) throw balanceError
@@ -108,17 +152,17 @@ serve(async (req) => {
         success: true,
         bonus,
         balance: Number(updatedUser.balance || 0),
-        nextCheckInAt: getNextCheckInAt(insertedCheckIn.created_at),
+        nextCheckInAt: getNextCheckInAt(insertedCheckIn.last_checkin ?? claimedAtIso),
       })
     }
 
     const [{ data: user, error: userError }, { data: lastCheckIn, error: checkInError }] = await Promise.all([
       supabase.from('users').select('balance').eq('id', userId).maybeSingle(),
       supabase
-        .from('checkin')
-        .select('created_at')
+        .from('checkins')
+        .select('last_checkin')
         .eq('user_id', userId)
-        .order('created_at', { ascending: false })
+        .order('last_checkin', { ascending: false, nullsFirst: false })
         .limit(1)
         .maybeSingle(),
     ])
@@ -127,7 +171,7 @@ serve(async (req) => {
     if (checkInError) throw checkInError
     if (!user) return jsonResponse({ error: 'Akun Telegram belum terdaftar di sistem.' }, 404)
 
-    const lastCheckInAt = lastCheckIn?.created_at ?? null
+    const lastCheckInAt = lastCheckIn?.last_checkin ?? null
     const nextCheckInAt = getNextCheckInAt(lastCheckInAt)
 
     return jsonResponse({
@@ -140,6 +184,7 @@ serve(async (req) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Saldo harian gagal diproses.'
     const isAuthError = message.includes('Telegram') || message.includes('autentikasi')
-    return jsonResponse({ error: message }, isAuthError ? 401 : 500)
+    console.error('daily-checkin error:', error)
+    return jsonResponse({ error: getPublicCheckInError(message) }, isAuthError ? 401 : 500)
   }
 })

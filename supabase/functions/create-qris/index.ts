@@ -60,7 +60,7 @@ serve(async (req) => {
       if (createUserError) throw createUserError
     }
 
-    const orderId = `DEP${crypto.randomUUID().replaceAll('-', '').slice(0, 18).toUpperCase()}`
+    const orderId = `MOCHI${crypto.randomUUID().replaceAll('-', '').slice(0, 10).toUpperCase()}`
     const payment = await createPakasirTransaction(orderId, parsedAmount)
     const project = getPakasirProject()
     const paymentUrl = `https://app.pakasir.com/pay/${encodeURIComponent(project)}/${parsedAmount}?order_id=${encodeURIComponent(orderId)}&qris_only=1`

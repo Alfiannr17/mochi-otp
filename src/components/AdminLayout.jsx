@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { CloseIcon, DashboardIcon, GiftIcon, MenuIcon, OrderIcon, SettingsIcon, UsersIcon, WalletIcon } from './Icons';
+import { CloseIcon, DashboardIcon, GiftIcon, MenuIcon, OrderIcon, UsersIcon, WalletIcon } from './Icons';
 import { adminApi } from '../lib/adminApi';
 import MochiButton from './MochiButton';
-import MochiLoader from './MochiLoader';
 
 export default function AdminLayout() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -39,14 +38,15 @@ export default function AdminLayout() {
     { path: '/admin/orders', name: 'Data Order', icon: OrderIcon },
     { path: '/admin/deposits', name: 'Deposit & QRIS', icon: WalletIcon },
     { path: '/admin/users', name: 'Manajemen User', icon: UsersIcon },
-    { path: '/admin/vouchers', name: 'Voucher & Promo', icon: GiftIcon },
-    { path: '/admin/features', name: 'Fitur & Maintenance', icon: SettingsIcon },
+    { path: '/admin/vouchers', name: 'Voucher & Promo', icon: GiftIcon }
   ];
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-mochi-bg font-mono">
-        <MochiLoader fullScreen message="Memverifikasi akses admin..." />
+      <div className="min-h-screen bg-mochi-bg font-mono flex items-center justify-center p-5">
+        <div className="w-full max-w-md border-2 border-black rounded-2xl bg-white p-8 text-center font-black shadow-neo">
+          Memverifikasi akses admin...
+        </div>
       </div>
     );
   }
@@ -54,7 +54,7 @@ export default function AdminLayout() {
   if (!admin) {
     return (
       <div className="min-h-screen bg-mochi-bg font-mono flex items-center justify-center p-5">
-        <div className="w-full max-w-md border-4 border-black rounded-2xl bg-white p-6 shadow-neo">
+        <div className="w-full max-w-md border-2 border-black rounded-2xl bg-white p-6 shadow-neo">
           <h1 className="text-2xl font-black mb-3">Akses Admin Ditolak</h1>
           <p className="font-bold text-sm mb-6">{errorMessage || 'Telegram ID kamu tidak ada di whitelist admin.'}</p>
           <MochiButton onClick={() => navigate('/home', { replace: true })}>Kembali ke Aplikasi</MochiButton>
@@ -75,11 +75,11 @@ export default function AdminLayout() {
 
       {/* Responsive Collapsible Sidebar */}
       <aside 
-        className={`fixed md:static inset-y-0 left-0 z-50 w-64 bg-white border-r-4 border-black transform transition-transform duration-300 ease-in-out ${
+        className={`fixed md:static inset-y-0 left-0 z-50 w-64 bg-white border-r-2 border-black transform transition-transform duration-300 ease-in-out ${
           isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         } flex flex-col shadow-neo md:shadow-none`}
       >
-        <div className="p-6 border-b-4 border-black flex justify-between items-center bg-mochi-green">
+        <div className="p-6 border-b-2 border-black flex justify-between items-center bg-mochi-green">
           <h2 className="text-2xl font-black tracking-tighter">MOCHI ADMIN</h2>
           <button className="md:hidden font-bold text-xl active:translate-y-1" onClick={toggleSidebar}><CloseIcon /></button>
         </div>
@@ -109,7 +109,7 @@ export default function AdminLayout() {
       {/* Area Konten Utama */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header Mobile untuk membuka sidebar */}
-        <header className="md:hidden bg-mochi-green border-b-4 border-black p-4 flex items-center justify-between shadow-neo z-30 relative">
+        <header className="md:hidden bg-mochi-green border-b-2 border-black p-4 flex items-center justify-between shadow-neo z-30 relative">
           <button 
             onClick={toggleSidebar} 
             className="font-bold border-2 border-black bg-white px-3 py-1 rounded shadow-neo active:translate-y-1 active:shadow-none transition-all"

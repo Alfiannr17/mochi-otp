@@ -4,14 +4,14 @@ import { HomeIcon, HistoryIcon, OrderIcon, UserIcon, WalletIcon } from './Icons'
 import { useTelegramAuth } from '../hooks/useTelegramAuth';
 import { MochiDialogProvider } from './MochiDialog';
 import { fetchUserData } from '../lib/userData';
-import MochiLoader from './MochiLoader';
 import { primeOtpNotificationSound, syncOtpNotifications } from '../lib/otpNotification';
+
+const BACKGROUND_ORDER_SYNC_MS = 30_000;
 
 export default function UserLayout() {
   const { errorMessage, loading } = useTelegramAuth();
   const location = useLocation();
   const orderSyncInFlight = useRef(false);
-  const depositSyncInFlight = useRef(false);
   const navItems = [
     { label: 'Home', path: '/home', icon: HomeIcon },
     { label: 'Order', path: '/order', icon: OrderIcon },
@@ -30,43 +30,31 @@ export default function UserLayout() {
     document.addEventListener('touchstart', unlockAudio, { once: true });
 
     const syncOrders = () => {
-      if (location.pathname.startsWith('/orders/') || orderSyncInFlight.current) return;
+      if (
+        document.visibilityState !== 'visible' ||
+        location.pathname.startsWith('/orders/') ||
+        orderSyncInFlight.current
+      ) return;
+
       orderSyncInFlight.current = true;
-      fetchUserData('orders')
+      fetchUserData('orders', { status: 'active', page: 1, pageSize: 20, sync: false })
         .then((result) => syncOtpNotifications(result.orders || []))
-        .catch((error) => console.error('Gagal menyinkronkan order:', error))
+        .catch((error) => console.error('Gagal menyinkronkan order aktif:', error))
         .finally(() => {
           orderSyncInFlight.current = false;
         });
     };
 
-    const syncDeposits = () => {
-      if (depositSyncInFlight.current) return;
-      depositSyncInFlight.current = true;
-      fetchUserData('deposits')
-        .catch((error) => console.error('Gagal menyinkronkan deposit:', error))
-        .finally(() => {
-          depositSyncInFlight.current = false;
-        });
-    };
-
-    const initialOrderSync = window.setTimeout(syncOrders, 0);
-    const initialDepositSync = window.setTimeout(syncDeposits, 0);
-    const orderInterval = window.setInterval(syncOrders, 7000);
-    const depositInterval = window.setInterval(syncDeposits, 30000);
+    const initialSync = window.setTimeout(syncOrders, 3000);
+    const interval = window.setInterval(syncOrders, BACKGROUND_ORDER_SYNC_MS);
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        syncOrders();
-        syncDeposits();
-      }
+      if (document.visibilityState === 'visible') syncOrders();
     };
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
-      window.clearTimeout(initialOrderSync);
-      window.clearTimeout(initialDepositSync);
-      window.clearInterval(orderInterval);
-      window.clearInterval(depositInterval);
+      window.clearTimeout(initialSync);
+      window.clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibility);
       document.removeEventListener('pointerdown', unlockAudio);
       document.removeEventListener('touchstart', unlockAudio);
@@ -75,8 +63,10 @@ export default function UserLayout() {
 
   if (loading) {
     return (
-      <div className="bg-mochi-bg min-h-screen font-mono text-black">
-        <MochiLoader fullScreen message="Menghubungkan akun Telegram..." />
+      <div className="bg-mochi-bg min-h-screen p-6 flex items-center justify-center font-mono text-black">
+        <div className="border-2 border-black rounded-xl bg-white p-6 text-center font-black shadow-neo">
+          Menghubungkan akun Telegram...
+        </div>
       </div>
     );
   }

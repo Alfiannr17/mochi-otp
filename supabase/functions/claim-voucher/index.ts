@@ -40,24 +40,8 @@ serve(async (req) => {
       return jsonResponse({ error: 'Kode voucher tidak ditemukan atau salah.' }, 400)
     }
 
-    if (!voucher.is_active) {
-      return jsonResponse({ error: 'Voucher sudah tidak aktif.' }, 400)
-    }
-
-    if (voucher.current_usage >= voucher.max_usage) {
-      return jsonResponse({ error: 'Kuota klaim voucher sudah habis.' }, 400)
-    }
-
-    // 2. Cek apakah user sudah pernah klaim voucher ini sebelumnya
-    const { data: alreadyClaimed } = await supabase
-      .from('voucher_claims')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('voucher_code', voucher.code)
-      .maybeSingle()
-
-    if (alreadyClaimed) {
-      return jsonResponse({ error: 'Kamu sudah pernah mengklaim voucher ini.' }, 400)
+    if (voucher.is_used) {
+      return jsonResponse({ error: 'Voucher sudah digunakan atau sudah tidak aktif.' }, 400)
     }
 
     const { data: userData, error: userError } = await supabase
@@ -70,33 +54,21 @@ serve(async (req) => {
       return jsonResponse({ error: 'Akun Telegram belum terdaftar di sistem.' }, 404)
     }
 
-    // 3. PROSES KLAIM: Jalankan operasi (Update kuota, catat klaim, tambah saldo)
-    
-    // Tambah angka penggunaan voucher (+1)
-    const { error: usageError } = await supabase
+    const { data: claimedVoucher, error: usageError } = await supabase
       .from('vouchers')
-      .update({ current_usage: voucher.current_usage + 1 })
-      .eq('code', voucher.code)
-      .eq('current_usage', voucher.current_usage)
+      .update({
+        is_used: true,
+        used_by: Number(userId),
+        used_at: new Date().toISOString(),
+      })
+      .eq('id', voucher.id)
+      .or('is_used.eq.false,is_used.is.null')
+      .select('id')
+      .maybeSingle()
 
     if (usageError) throw usageError
-
-    // Catat histori klaim ke voucher_claims
-    const { error: claimError } = await supabase
-      .from('voucher_claims')
-      .insert({ user_id: userId, voucher_code: voucher.code })
-
-    if (claimError) {
-      await supabase
-        .from('vouchers')
-        .update({ current_usage: voucher.current_usage })
-        .eq('code', voucher.code)
-        .eq('current_usage', voucher.current_usage + 1)
-
-      if (claimError.code === '23505') {
-        return jsonResponse({ error: 'Kamu sudah pernah mengklaim voucher ini.' }, 400)
-      }
-      throw claimError
+    if (!claimedVoucher) {
+      return jsonResponse({ error: 'Voucher baru saja digunakan oleh user lain.' }, 400)
     }
 
     const newBalance = Number(userData?.balance || 0) + Number(voucher.amount)
@@ -106,7 +78,14 @@ serve(async (req) => {
       .update({ balance: newBalance })
       .eq('id', userId)
 
-    if (balanceError) throw balanceError
+    if (balanceError) {
+      await supabase
+        .from('vouchers')
+        .update({ is_used: false, used_by: null, used_at: null })
+        .eq('id', voucher.id)
+        .eq('used_by', Number(userId))
+      throw balanceError
+    }
 
     return jsonResponse({ success: true, amount: voucher.amount })
 

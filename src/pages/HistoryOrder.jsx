@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchUserData } from '../lib/userData';
 import { parseOtpState } from '../lib/otpHistory';
 import MochiLoader from '../components/MochiLoader';
 import { HistoryFilter, HistoryPagination } from '../components/HistoryControls';
+import { syncOtpNotifications } from '../lib/otpNotification';
 
 const PAGE_SIZE = 10;
+const HISTORY_REFRESH_MS = 30_000;
 const ORDER_FILTERS = [
   { value: 'all', label: 'Semua Status' },
   { value: 'active', label: 'Aktif' },
@@ -18,6 +20,8 @@ const getStatusBadge = (status) => {
   if (status === 'completed') return 'bg-mochi-green';
   return 'bg-red-300';
 };
+
+const formatRupiah = (value) => `Rp.${Number(value || 0).toLocaleString('id-ID')}`;
 
 function OrderCard({ order, onOpen }) {
   const isActive = order.status === 'active';
@@ -47,6 +51,10 @@ function OrderCard({ order, onOpen }) {
         <div className="flex justify-between gap-3">
           <span className="text-gray-600">Nomor HP:</span>
           <span className="font-bold text-right">{order.phone_number || 'Menunggu nomor...'}</span>
+        </div>
+        <div className="flex justify-between gap-3">
+          <span className="text-gray-600">Harga:</span>
+          <span className="font-black text-right text-purple-700">{formatRupiah(order.price)}</span>
         </div>
         <div className="pt-1">
           <span className="block text-gray-600 mb-2">Kode SMS:</span>
@@ -99,14 +107,22 @@ export default function HistoryOrder() {
   const [errorMessage, setErrorMessage] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
   const fetchInFlight = useRef(false);
 
   const fetchOrderHistory = useCallback(async () => {
     if (fetchInFlight.current) return;
     fetchInFlight.current = true;
     try {
-      const data = await fetchUserData('orders');
+      const data = await fetchUserData('orders', {
+        page,
+        pageSize: PAGE_SIZE,
+        status: statusFilter,
+        sync: false,
+      });
       setOrders(data.orders || []);
+      setTotalCount(Number(data.total || 0));
+      await syncOtpNotifications(data.orders || []);
       setErrorMessage('');
     } catch (error) {
       setErrorMessage(error.message || 'Gagal memuat riwayat order.');
@@ -114,11 +130,13 @@ export default function HistoryOrder() {
       setLoading(false);
       fetchInFlight.current = false;
     }
-  }, []);
+  }, [page, statusFilter]);
 
   useEffect(() => {
     const initialLoad = window.setTimeout(fetchOrderHistory, 0);
-    const interval = window.setInterval(fetchOrderHistory, 7000);
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') fetchOrderHistory();
+    }, HISTORY_REFRESH_MS);
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') fetchOrderHistory();
     };
@@ -131,16 +149,8 @@ export default function HistoryOrder() {
     };
   }, [fetchOrderHistory]);
 
-  const filteredOrders = useMemo(
-    () => orders.filter((order) => statusFilter === 'all' || order.status === statusFilter),
-    [orders, statusFilter],
-  );
-  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const effectivePage = Math.min(page, totalPages);
-  const visibleOrders = useMemo(
-    () => filteredOrders.slice((effectivePage - 1) * PAGE_SIZE, effectivePage * PAGE_SIZE),
-    [effectivePage, filteredOrders],
-  );
   const openOrder = (order) => navigate(`/orders/${order.id}`, { state: { order } });
 
   const handleFilterChange = (value) => {
@@ -158,7 +168,7 @@ export default function HistoryOrder() {
           value={statusFilter}
           onChange={handleFilterChange}
           options={ORDER_FILTERS}
-          resultCount={filteredOrders.length}
+          resultCount={totalCount}
         />
       )}
 
@@ -182,10 +192,10 @@ export default function HistoryOrder() {
         </div>
       ) : (
         <>
-          <h2 className="font-black mb-3">Daftar Order ({filteredOrders.length})</h2>
-          {visibleOrders.length > 0 ? (
+          <h2 className="font-black mb-3">Daftar Order ({totalCount})</h2>
+          {orders.length > 0 ? (
             <div className="space-y-4">
-              {visibleOrders.map((order) => (
+              {orders.map((order) => (
                 <OrderCard key={order.id} order={order} onOpen={openOrder} />
               ))}
             </div>

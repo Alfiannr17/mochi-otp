@@ -16,7 +16,9 @@ const formatCooldown = (totalSeconds) => {
 
 const getFunctionErrorMessage = async (error, fallback) => {
   try {
-    const payload = await error?.context?.clone?.().json();
+    const payload = error?.context?.clone
+      ? await error.context.clone().json()
+      : await error?.context?.json?.();
     return payload?.error || fallback;
   } catch {
     return error?.message || fallback;
@@ -36,6 +38,7 @@ export default function Profile() {
   
   // Ambil data user Telegram
   const tgUser = getTelegramUser();
+  const userId = tgUser?.id;
   const secondsUntilCheckIn = nextCheckInAt
     ? Math.max(0, Math.ceil((new Date(nextCheckInAt).getTime() - clock) / 1000))
     : 0;
@@ -46,6 +49,17 @@ export default function Profile() {
 
     const loadProfile = async () => {
       try {
+        let hasLoadedUserBalance = false;
+        const { data: userData } = userId
+          ? await supabase.from('users').select('balance').eq('id', userId).maybeSingle()
+          : { data: null };
+
+        if (!active) return;
+        if (userData) {
+          hasLoadedUserBalance = true;
+          setBalance(Number(userData.balance || 0));
+        }
+
         if (!WebApp.initData) throw new Error('Data autentikasi Telegram tidak tersedia. Buka kembali Mini App dari bot.');
         const { data, error } = await supabase.functions.invoke('daily-checkin', {
           body: { initData: WebApp.initData, action: 'status' },
@@ -53,7 +67,9 @@ export default function Profile() {
         if (error) throw new Error(await getFunctionErrorMessage(error, 'Gagal memuat saldo harian.'));
 
         if (!active) return;
-        setBalance(Number(data?.balance || 0));
+        if (!hasLoadedUserBalance && data?.balance !== undefined) {
+          setBalance(Number(data.balance || 0));
+        }
         setNextCheckInAt(data?.nextCheckInAt || null);
         setClock(Date.now());
         setCheckInError('');
@@ -68,7 +84,7 @@ export default function Profile() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     if (!nextCheckInAt) return undefined;
