@@ -1013,78 +1013,47 @@ Setiap function yang mengimpor file shared tersebut harus di-deploy ulang.
 
 Vercel akan menjalankan build secara otomatis saat deploy. Menjalankan `npm run lint` dan `npm run build` sebelum deploy tetap wajib disarankan agar error ditemukan sebelum production.
 
-## 10. Atur Webhook Telegram
+## 10. Hubungkan Mini App ke Bot Telegram
 
-Lakukan langkah ini setelah:
+Jika kamu sudah memiliki bot Telegram lama yang berjalan di VPS, jangan pindahkan webhook bot tersebut ke Supabase. Biarkan flow bot lama tetap berjalan seperti sebelumnya, lalu tambahkan tombol Mini App pada keyboard `/start` di source bot lama.
 
-- Frontend final sudah online.
-- Secrets sudah dipasang.
-- Function `telegram-bot` dan `telegram-auth` sudah berhasil di-deploy.
+Tambahkan env pada project bot lama:
 
-Memanggil `setWebhook` akan langsung mengarahkan bot dari webhook lama ke project Supabase kamu.
-
-PowerShell:
-
-```powershell
-$BotToken = "TOKEN_BOT_KAMU"
-$ProjectRef = "REAL_PROJECT_REF"
-$MiniAppUrl = "https://app.domain-kamu.com"
-$WebhookSecret = "SECRET_YANG_SAMA_DENGAN_SUPABASE"
-
-$webhookBody = @{
-  url = "https://$ProjectRef.supabase.co/functions/v1/telegram-bot"
-  secret_token = $WebhookSecret
-  drop_pending_updates = $true
-  allowed_updates = @("message")
-} | ConvertTo-Json -Depth 5
-
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "https://api.telegram.org/bot$BotToken/setWebhook" `
-  -ContentType "application/json" `
-  -Body $webhookBody
+```env
+MINI_APP_URL=https://app.domain-kamu.com
 ```
 
-Jika menggunakan VPS Ubuntu, arahkan webhook dengan `curl`:
+Cari keyboard `/start` pada `index.js` bot lama, lalu tambahkan baris tombol berikut pada `inline_keyboard`:
+
+```js
+[{ text: 'BUKA MOCHI OTP', web_app: { url: process.env.MINI_APP_URL } }],
+```
+
+Contoh:
+
+```js
+const keyboard = {
+  inline_keyboard: [
+    [{ text: 'BUKA MOCHI OTP', web_app: { url: process.env.MINI_APP_URL } }],
+    [{ text: 'Cara Penggunaan', callback_data: 'panduan' }],
+    [{ text: 'Order OTP', callback_data: 'menu_otp' }, { text: 'Deposit', callback_data: 'menu_deposit' }],
+    [{ text: 'Histori Order', callback_data: 'hist_order' }, { text: 'Histori Deposit', callback_data: 'hist_depo' }],
+  ],
+};
+```
+
+Jika bot lama juga punya handler tombol kembali seperti `bot.action('start', ...)`, tambahkan tombol `BUKA MOCHI OTP` di keyboard handler tersebut juga.
+
+Restart bot lama:
+
+```bash
+pm2 restart nama-service-bot
+```
+
+Atur tombol menu Mini App Telegram dari VPS:
 
 ```bash
 BOT_TOKEN="TOKEN_BOT_KAMU"
-PROJECT_REF="REAL_PROJECT_REF"
-WEBHOOK_SECRET="SECRET_YANG_SAMA_DENGAN_SUPABASE"
-
-curl -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"url\":\"https://${PROJECT_REF}.supabase.co/functions/v1/telegram-bot\",
-    \"secret_token\":\"${WEBHOOK_SECRET}\",
-    \"drop_pending_updates\":true,
-    \"allowed_updates\":[\"message\"]
-  }"
-```
-
-Atur tombol menu Mini App:
-
-```powershell
-$menuBody = @{
-  menu_button = @{
-    type = "web_app"
-    text = "ORDER OTP"
-    web_app = @{
-      url = $MiniAppUrl
-    }
-  }
-} | ConvertTo-Json -Depth 5
-
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "https://api.telegram.org/bot$BotToken/setChatMenuButton" `
-  -ContentType "application/json" `
-  -Body $menuBody
-```
-
-Untuk mengatur tombol menu Mini App dari VPS:
-
-```bash
 MINI_APP_URL="https://app.domain-kamu.com"
 
 curl -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setChatMenuButton" \
@@ -1098,53 +1067,22 @@ curl -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setChatMenuButton" \
   }"
 ```
 
-Periksa webhook:
-
-```powershell
-Invoke-RestMethod "https://api.telegram.org/bot$BotToken/getWebhookInfo"
-```
-
-Pada VPS:
+Periksa bot:
 
 ```bash
 curl "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
+pm2 logs nama-service-bot
 ```
 
-Nilai `url` wajib menjadi:
+Pastikan `/start` masih menampilkan menu bot lama, order via bot lama tetap berjalan, dan tombol `BUKA MOCHI OTP` membuka Mini App.
+
+Jika kamu tidak punya bot lama dan ingin memakai Edge Function `telegram-bot` dari source ini, baru arahkan webhook Telegram ke:
 
 ```text
 https://REAL_PROJECT_REF.supabase.co/functions/v1/telegram-bot
 ```
 
-Pastikan:
-
-```text
-pending_update_count = 0
-last_error_message kosong
-```
-
-Kemudian uji:
-
-```text
-/start
-/admin
-```
-
-Balasan `/start` wajib menampilkan tiga tombol:
-
-```text
-BUKA MOCHI OTP
-CHANNEL MOCHI
-CS MOCHI
-```
-
-Pastikan:
-
-```text
-BUKA MOCHI OTP membuka FINAL_MINI_APP_URL sebagai Telegram Mini App.
-CHANNEL MOCHI membuka TELEGRAM_CHANNEL_URL.
-CS MOCHI membuka TELEGRAM_CS_URL.
-```
+Jangan gunakan mode Edge Function ini jika bot lama sudah aktif, karena satu bot Telegram hanya bisa memiliki satu webhook aktif.
 
 Jika `/admin` menolak, bot akan menampilkan Telegram ID. Tambahkan ID tersebut:
 
@@ -1198,7 +1136,7 @@ Gunakan urutan berikut agar aplikasi tidak putus di tengah proses:
 7. Pasang seluruh secrets di Supabase kamu.
 8. Deploy seluruh Edge Functions ke Supabase kamu.
 9. Uji endpoint dan frontend.
-10. Atur Telegram webhook.
+10. Hubungkan Mini App ke bot Telegram lama atau gunakan Edge Function bot jika tidak ada bot lama.
 11. Atur Pakasir webhook.
 12. Uji transaksi kecil dari awal sampai selesai.
 13. Hentikan penggunaan project dummy setelah seluruh pengujian berhasil.
@@ -1210,7 +1148,7 @@ Jangan menghapus atau mematikan project dummy sebelum seluruh order aktif dan de
 ### Telegram dan Login
 
 - `/start` membalas.
-- `/start` menampilkan tombol `BUKA MOCHI OTP`, `CHANNEL MOCHI`, dan `CS MOCHI`.
+- `/start` menampilkan tombol `BUKA MOCHI OTP` pada bot lama atau pada Edge Function bot.
 - Tombol Mini App membuka URL final.
 - Tombol Channel dan CS membuka akun kamu.
 - Akun Telegram terdeteksi.
@@ -1282,7 +1220,7 @@ Referensi tersebut tidak boleh tersisa di:
 supabase/.temp/project-ref
 scripts/setup-telegram.ps1
 konfigurasi deployment
-Telegram webhook
+Konfigurasi bot Telegram
 Pakasir webhook
 ```
 
@@ -1294,7 +1232,7 @@ File `scripts/setup-telegram.ps1` memiliki project ref dummy sebagai nilai defau
   -MiniAppUrl "https://app.domain-kamu.com"
 ```
 
-Catatan: script tersebut belum mengirim `TELEGRAM_WEBHOOK_SECRET` saat memasang webhook. Untuk konfigurasi webhook yang aman, gunakan perintah manual pada langkah 10.
+Catatan: jika kamu memakai bot lama yang sudah berjalan, jangan gunakan script ini untuk memindahkan webhook Telegram. Cukup tambahkan tombol `web_app` di source bot lama sesuai langkah 10.
 
 Script tersebut juga belum mengatur `TELEGRAM_CHANNEL_URL`, `TELEGRAM_CS_URL`, dan `ADMIN_TELEGRAM_IDS`. Pasang ketiganya menggunakan perintah `supabase secrets set` pada langkah 8.
 
@@ -1309,7 +1247,7 @@ Sebagian Edge Functions menggunakan verify_jwt=false dan harus melakukan validas
 
 Profile check-in sudah diproses oleh Edge Function `daily-checkin` dan memvalidasi Telegram initData. Tetap tambahkan validasi Telegram pada seluruh aksi lain yang mengubah saldo, membuat order, membatalkan order, mengklaim voucher, atau membuat deposit.
 
-Sebelum mengaktifkan webhook production, lakukan audit khusus terhadap:
+Sebelum mengaktifkan production, lakukan audit khusus terhadap:
 
 ```text
 buy-number
@@ -1325,14 +1263,15 @@ RLS policy seluruh tabel public
 
 ## 16. Rollback Jika Terjadi Masalah
 
-Jika bot berhenti merespons setelah webhook dipindahkan:
+Jika bot lama berhenti merespons setelah update:
 
-1. Periksa `getWebhookInfo`.
-2. Periksa log function `telegram-bot` pada Supabase kamu.
-3. Pastikan `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_ID`, `MINI_APP_URL`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_CHANNEL_URL`, dan `TELEGRAM_CS_URL` benar.
-4. Pastikan webhook menggunakan Project Reference ID kamu.
+1. Periksa status service bot, misalnya `pm2 status`.
+2. Periksa log bot lama, misalnya `pm2 logs nama-service-bot`.
+3. Pastikan `BOT_TOKEN` dan `MINI_APP_URL` pada env bot lama benar.
+4. Pastikan tombol `web_app` sudah ditambahkan pada keyboard `/start`.
+5. Jangan mengarahkan webhook Telegram ke Supabase jika bot lama masih menjadi handler utama.
 
-Jika perlu mengembalikan Telegram webhook sementara ke project dummy:
+Jika kamu memang memakai Edge Function `telegram-bot` dan perlu mengembalikan Telegram webhook sementara ke project dummy:
 
 ```powershell
 $DummyWebhookSecret = "SECRET_WEBHOOK_PROJECT_DUMMY_JIKA_ADA"
@@ -1438,7 +1377,16 @@ Beberapa perangkat memblokir audio sampai user menyentuh Mini App minimal satu k
 
 ### Bot `/start` Tidak Membalas
 
-Periksa:
+Jika memakai bot lama di VPS, periksa:
+
+```text
+Service bot lama aktif.
+BOT_TOKEN pada env bot lama benar.
+Log PM2/systemd tidak menampilkan error.
+Webhook Telegram tidak dipindahkan ke project lain tanpa sengaja.
+```
+
+Jika memakai Edge Function `telegram-bot`, periksa:
 
 ```text
 Function telegram-bot ACTIVE.
@@ -1475,9 +1423,10 @@ Gunakan daftar ini tepat sebelum aplikasi diumumkan ke user:
 [ ] Semua Supabase secrets berasal dari akun kamu.
 [ ] TELEGRAM_CHANNEL_URL dan TELEGRAM_CS_URL sudah benar.
 [ ] Semua Edge Functions berstatus ACTIVE.
-[ ] Telegram webhook menunjuk ke REAL_PROJECT_REF.
+[ ] Jika memakai bot lama, source bot lama sudah memiliki tombol web_app ke Mini App.
+[ ] Jika memakai Edge Function bot, Telegram webhook menunjuk ke REAL_PROJECT_REF.
 [ ] Pakasir webhook menunjuk ke REAL_PROJECT_REF.
-[ ] /start menampilkan tiga tombol yang benar.
+[ ] /start menampilkan tombol Mini App yang benar.
 [ ] /admin hanya dapat dibuka oleh ADMIN_TELEGRAM_IDS.
 [ ] Admin dapat tambah/kurangi saldo tanpa membuat saldo minus.
 [ ] Server 2 menampilkan otp_message serta menahan refund selama 2 menit.
